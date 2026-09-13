@@ -434,7 +434,8 @@ describe('outline_search all=true 自动翻页', () => {
       searchDocuments: async (_q, _l, _c, _f, offset) => { offsets.push(offset ?? 0); return pages[call++] ?? { total: 3, hits: [] } },
     }), 10)
     const r = await tool.execute({ query: 'x', all: true }, exec) as any
-    expect(offsets).toEqual([0, 25])
+    // 首抓 limit=100 只回了 2 条（短页）→ 兜底按实际页长 2 续抓 offset=2
+    expect(offsets).toEqual([0, 2])
     expect(r.hits.map((h: any) => h.id)).toEqual(['a', 'b', 'c'])
     expect(r.total).toBe(3)
   })
@@ -454,6 +455,43 @@ describe('outline_search all=true 自动翻页', () => {
     }), 10)
     await tool.execute({ query: 'x' }, exec)
     expect(call).toBe(1)
+  })
+
+  it('总数为 100 时抓满 4 页，顺序与串行一致且余下页面并发发出', async () => {
+    const offsets: number[] = []
+    let inFlight = 0
+    let maxInFlight = 0
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async (_q, _l, _c, _f, offset = 0) => {
+        offsets.push(offset)
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((r) => setTimeout(r, 3))
+        inFlight -= 1
+        return { total: 100, hits: Array.from({ length: 25 }, (_, i) => hit(`d${offset + i}`)) }
+      },
+    }), 10)
+    const r = await tool.execute({ query: 'x', all: true }, exec) as any
+    expect(offsets).toEqual([0, 25, 50, 75]) // 4 页都抓到、无越界 offset
+    expect(maxInFlight).toBeGreaterThan(1) // 第 3、4 页并发发出
+    expect(r.hits.map((h: any) => h.id)).toEqual(Array.from({ length: 100 }, (_, i) => `d${i}`)) // 顺序未被并发打乱
+    expect(r.total).toBe(100)
+  })
+
+  it('实例支持 limit=100 时单请求抓满（1 次请求，不再逐页翻）', async () => {
+    const limits: number[] = []
+    let call = 0
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async (_q, limit) => {
+        limits.push(limit)
+        call += 1
+        return { total: 100, hits: Array.from({ length: 100 }, (_, i) => hit(`d${i}`)) }
+      },
+    }), 10)
+    const r = await tool.execute({ query: 'x', all: true }, exec) as any
+    expect(call).toBe(1) // 关键：一次请求代替原来的 4 次串行翻页
+    expect(limits).toEqual([100])
+    expect(r.hits).toHaveLength(100)
   })
 })
 

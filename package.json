@@ -1,6 +1,6 @@
 {
     "name": "dsh-outline-auto",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "description": "DSH web plugin: search and read an Outline knowledge base from conversations, with approved, whitelist-guarded document writes.",
     "type": "module",
     "license": "MIT",
@@ -10,6 +10,8 @@
     "files": [
         "lib",
         "src",
+        "skills-adapter.js",
+        "skills",
         "client.js",
         "cordis.patch.yml",
         "scripts/repair-profile.mjs",
@@ -44,6 +46,7 @@
     "exports": {
         ".": "./lib/index.js",
         "./client": "./client.js",
+        "./skills-adapter.js": "./skills-adapter.js",
         "./package.json": "./package.json"
     },
     "dsh": {
@@ -74,6 +77,7 @@
     "peerDependencies": {
         "@deepseek-ai/cordis": ">=4.0.0",
         "@deepseek-ai/dsh-settings": ">=0.1.1-rc.2 <0.2.0",
+        "@deepseek-ai/dsh-skill-filesystem": ">=0.1.1-rc.2 <0.2.0",
         "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
         "@deepseek-ai/dsh-user-approval": ">=0.1.1-rc.2 <0.2.0"
     },

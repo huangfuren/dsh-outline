@@ -2,6 +2,8 @@ import type { OutlineClient, OutlineSearchHit, OutlineDocument, OutlineCollectio
 export declare const SEARCH_MAX_LIMIT = 25;
 /** all=true 时自动翻页的总条数上限（防超大结果集撑爆上下文）。 */
 export declare const SEARCH_ALL_MAX = 100;
+/** all=true 翻页时同时在飞的请求数上限（前两页顺序探测，余下页面并发）。 */
+export declare const SEARCH_ALL_CONCURRENCY = 4;
 export declare const DOCUMENT_DEFAULT_MAX_LENGTH = 20000;
 export declare const DOCUMENT_MAX_LENGTH_CAP = 200000;
 /**

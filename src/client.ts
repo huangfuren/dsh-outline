@@ -1,5 +1,33 @@
 import { OutlineApiError, throwForStatus } from './errors.js'
 
+/**
+ * 按并发上限批量执行异步任务，返回值保持入参顺序（任一任务抛错则整体抛出，由调用方决定降级）。
+ * 用于把「N 次串行往返」压成「1 次 + 并发」：结果与串行完全一致，只是等待时间被重叠掉。
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const results = new Array<R>(items.length)
+  let cursor = 0
+  const workerCount = Math.max(1, Math.min(limit, items.length))
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) return
+      results[index] = await fn(items[index] as T, index)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+/** Outline 服务端分页硬上限：limit > 100 会被以 400 "Pagination limit is too large" 拒绝。 */
+export const OUTLINE_MAX_PAGE_SIZE = 100
+
 export interface OutlineSearchHit {
   id: string
   title: string
@@ -8,7 +36,7 @@ export interface OutlineSearchHit {
   collectionId: string
   updatedAt: string
   parentDocumentId?: string
-  /** 作者显示名（users.list 映射；接口不可用或无作者时缺省）。 */
+  /** 作者显示名（取自搜索响应的 createdBy.name；缺省时回退 users.list 映射）。 */
   authorName?: string
 }
 
@@ -81,6 +109,10 @@ export class OutlineClient {
   /** searchDocuments 结果的短期缓存（key = 归一化查询参数），同 query 连续提问不重复打 API。 */
   private readonly searchCache = new Map<string, { expires: number; result: OutlineSearchResult }>()
   private static readonly SEARCH_CACHE_MAX_ENTRIES = 50
+  /** Outline 服务端分页上限（limit > 100 直接返回 400 "Pagination limit is too large"）。 */
+  private static readonly MAX_PAGE_SIZE = OUTLINE_MAX_PAGE_SIZE
+  /** 单次工具调用内同时在飞的请求数上限：压住并发以免瞬时打爆上游（触发 429 反而更慢）。 */
+  private static readonly MAX_CONCURRENCY = 4
 
   constructor(options: OutlineClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -191,6 +223,29 @@ export class OutlineClient {
     return data as T
   }
 
+  /**
+   * 通用分页拉取：先取第一页拿到 total，再按需并发补齐后续页（并发上限 MAX_CONCURRENCY）。
+   * 结果按 offset 顺序拼接 —— 与逐页串行拉取逐条等价（同集合、同顺序、不漏项），
+   * 但把 N 次串行往返压成「1 次 + 并发」，大集合/多用户实例下省掉 N-1 个 RTT。
+   * 页偏移按上一页实际返回条数推进：服务端若把 limit 压得更小也不会漏页。
+   */
+  private async fetchAllPages<T>(
+    fetchPage: (offset: number, pageSize: number) => Promise<{ items: T[]; total: number }>,
+    pageSize: number,
+  ): Promise<T[]> {
+    const first = await fetchPage(0, pageSize)
+    if (first.items.length === 0) return []
+    const step = first.items.length > 0 ? first.items.length : pageSize
+    const total = Math.max(first.total, first.items.length)
+    if (first.items.length >= total) return first.items
+    const offsets: number[] = []
+    for (let offset = step; offset < total; offset += step) offsets.push(offset)
+    const rest = await mapWithConcurrency(offsets, OutlineClient.MAX_CONCURRENCY, (offset) => fetchPage(offset, pageSize))
+    const items = [...first.items]
+    for (const page of rest) items.push(...page.items)
+    return items
+  }
+
   async searchDocuments(query: string, limit: number, collectionId?: string, filters?: { userId?: string; updatedAfter?: string }, offset = 0): Promise<OutlineSearchResult> {
     // 结果短期缓存：同 query 连续提问不重复打 API；写操作（create/update/delete）统一 clear 失效。
     const cacheKey = JSON.stringify([query, limit, collectionId ?? '', filters?.userId ?? '', filters?.updatedAfter ?? '', offset])
@@ -209,6 +264,12 @@ export class OutlineClient {
     const mapped = data.map((item) => {
       const record = (item ?? {}) as Record<string, unknown>
       const document = (record.document ?? {}) as Record<string, unknown>
+      // 作者名优先从搜索响应里直接取（Outline 在 document.createdBy 里带回完整用户对象），
+      // 这样无需为「显示作者」额外拉一次 users.list；缺失时再退回 id → users.list 映射。
+      const createdBy = (document.createdBy ?? record.createdBy) as Record<string, unknown> | undefined
+      const createdName = typeof createdBy?.name === 'string' && createdBy.name.trim() !== ''
+        ? OutlineClient.stripHtml(createdBy.name)
+        : undefined
       const rawUser = (document.user ?? record.user ?? {}) as Record<string, unknown>
       const authorId = typeof rawUser.id === 'string' && rawUser.id !== '' ? rawUser.id : undefined
       const hit: OutlineSearchHit = {
@@ -221,11 +282,12 @@ export class OutlineClient {
         ...(document.parentDocumentId !== undefined && document.parentDocumentId !== null
           ? { parentDocumentId: String(document.parentDocumentId) }
           : {}),
+        ...(createdName !== undefined ? { authorName: createdName } : {}),
       }
-      return { hit, authorId }
+      return { hit, authorId: createdName !== undefined ? undefined : authorId }
     })
     const hits = mapped.map((m) => m.hit)
-    // 解析作者名（users.list 失败则降级，不阻断搜索）。仅当确有作者时才拉一次映射。
+    // 解析作者名（响应未带回名字时才拉 users.list；失败则降级，不阻断搜索）。
     const authorIds = [...new Set(mapped.map((m) => m.authorId).filter((x): x is string => x !== undefined))]
     if (authorIds.length > 0) {
       const nameMap = await this.userNameMap()
@@ -260,26 +322,25 @@ export class OutlineClient {
   async listCollections(force = false): Promise<OutlineCollection[]> {
     const cached = this.collectionsCache
     if (!force && cached !== null && cached !== undefined && cached.expires > Date.now()) return cached.collections
-    // Outline 分页：循环拉取直到收齐 pagination.total（防止集合数超过一页时漏集合）
-    const collections: OutlineCollection[] = []
-    const pageSize = 100
-    for (let offset = 0; ; offset += pageSize) {
-      const json = await this.requestJson(`/api/collections.list?limit=${pageSize}&offset=${offset}`, {})
-      const data = Array.isArray(json.data) ? json.data : []
-      for (const item of data) {
-        const c = (item ?? {}) as Record<string, unknown>
-        collections.push({
-          id: typeof c.id === 'string' ? c.id : '',
-          name: typeof c.name === 'string' ? c.name : '(未命名集合)',
-          permission: typeof c.permission === 'string' ? c.permission : '',
-          ...(typeof c.documentCount === 'number' ? { documentCount: c.documentCount } : {}),
-        })
-      }
-      const pagination = (json.pagination ?? {}) as { total?: unknown }
-      const total = typeof pagination.total === 'number' ? pagination.total : collections.length
-      if (data.length === 0) break
-      if (collections.length >= total) break
-    }
+    // Outline 分页：先取第一页拿 total，再并发补齐余下页面（防止集合数超过一页时漏集合）
+    const raw = await this.fetchAllPages<Record<string, unknown>>(
+      async (offset, pageSize) => {
+        const json = await this.requestJson(`/api/collections.list?limit=${pageSize}&offset=${offset}`, {})
+        const data = Array.isArray(json.data) ? json.data : []
+        const pagination = (json.pagination ?? {}) as { total?: unknown }
+        return {
+          items: data.map((item) => (item ?? {}) as Record<string, unknown>),
+          total: typeof pagination.total === 'number' ? pagination.total : data.length,
+        }
+      },
+      OutlineClient.MAX_PAGE_SIZE,
+    )
+    const collections: OutlineCollection[] = raw.map((c) => ({
+      id: typeof c.id === 'string' ? c.id : '',
+      name: typeof c.name === 'string' ? c.name : '(未命名集合)',
+      permission: typeof c.permission === 'string' ? c.permission : '',
+      ...(typeof c.documentCount === 'number' ? { documentCount: c.documentCount } : {}),
+    }))
     this.collectionsCache = { expires: Date.now() + this.cacheTtlMs, collections }
     return collections
   }
@@ -288,24 +349,24 @@ export class OutlineClient {
   async listUsers(force = false): Promise<OutlineUser[]> {
     const cached = this.usersCache
     if (!force && cached !== null && cached.expires > Date.now()) return cached.users
-    const users: OutlineUser[] = []
-    const pageSize = 100
-    for (let offset = 0; ; offset += pageSize) {
-      const json = await this.requestJson(`/api/users.list?limit=${pageSize}&offset=${offset}`, {})
-      const data = Array.isArray(json.data) ? json.data : []
-      for (const item of data) {
-        const u = (item ?? {}) as Record<string, unknown>
-        users.push({
-          id: typeof u.id === 'string' ? u.id : '',
-          name: typeof u.name === 'string' ? u.name : '(未命名用户)',
-          ...(typeof u.email === 'string' && u.email !== '' ? { email: u.email } : {}),
-        })
-      }
-      const pagination = (json.pagination ?? {}) as { total?: unknown }
-      const total = typeof pagination.total === 'number' ? pagination.total : users.length
-      if (data.length === 0) break
-      if (users.length >= total) break
-    }
+    // 先取第一页拿 total，再并发补齐余下页面（大工作区下避免 N 次串行往返）
+    const raw = await this.fetchAllPages<Record<string, unknown>>(
+      async (offset, pageSize) => {
+        const json = await this.requestJson(`/api/users.list?limit=${pageSize}&offset=${offset}`, {})
+        const data = Array.isArray(json.data) ? json.data : []
+        const pagination = (json.pagination ?? {}) as { total?: unknown }
+        return {
+          items: data.map((item) => (item ?? {}) as Record<string, unknown>),
+          total: typeof pagination.total === 'number' ? pagination.total : data.length,
+        }
+      },
+      OutlineClient.MAX_PAGE_SIZE,
+    )
+    const users: OutlineUser[] = raw.map((u) => ({
+      id: typeof u.id === 'string' ? u.id : '',
+      name: typeof u.name === 'string' ? u.name : '(未命名用户)',
+      ...(typeof u.email === 'string' && u.email !== '' ? { email: u.email } : {}),
+    }))
     this.usersCache = { expires: Date.now() + this.cacheTtlMs, users }
     return users
   }
@@ -411,33 +472,32 @@ export class OutlineClient {
 
   /** 列出某父文档下的直接子文档（用于路径定位；本地匹配名称，避免搜索分词歧义）。 */
   async listChildDocuments(parentDocumentId: string, pageSize = 100): Promise<OutlineSearchHit[]> {
-    // Outline documents.list 分页：循环拉取直到收齐 total（防止子文档超过一页时漏项）
-    const hits: OutlineSearchHit[] = []
-    for (let offset = 0; ; offset += pageSize) {
-      const json = await this.requestJson(`/api/documents.list`, {
-        parentDocumentId,
-        limit: pageSize,
-        ...(offset > 0 ? { offset } : {}),
-      })
-      const data = Array.isArray(json.data) ? json.data : []
-      for (const item of data) {
-        const d = (item ?? {}) as Record<string, unknown>
-        hits.push({
-          id: typeof d.id === 'string' ? d.id : '',
-          title: OutlineClient.stripHtml(typeof d.title === 'string' ? d.title : '(无标题)'),
-          url: this.absolutize(typeof d.url === 'string' ? d.url : ''),
-          snippet: '',
-          collectionId: typeof d.collectionId === 'string' ? d.collectionId : '',
-          updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : '',
-          ...(d.parentDocumentId !== undefined && d.parentDocumentId !== null ? { parentDocumentId: String(d.parentDocumentId) } : {}),
+    // 先取第一页拿 total，再并发补齐余下页面（防止子文档超过一页时漏项）
+    const docs = await this.fetchAllPages<Record<string, unknown>>(
+      async (offset, size) => {
+        const json = await this.requestJson(`/api/documents.list`, {
+          parentDocumentId,
+          limit: size,
+          ...(offset > 0 ? { offset } : {}),
         })
-      }
-      const pagination = (json.pagination ?? {}) as { total?: unknown }
-      const total = typeof pagination.total === 'number' ? pagination.total : hits.length
-      if (data.length === 0) break
-      if (hits.length >= total) break
-    }
-    return hits
+        const data = Array.isArray(json.data) ? json.data : []
+        const pagination = (json.pagination ?? {}) as { total?: unknown }
+        return {
+          items: data.map((item) => (item ?? {}) as Record<string, unknown>),
+          total: typeof pagination.total === 'number' ? pagination.total : data.length,
+        }
+      },
+      pageSize,
+    )
+    return docs.map((d) => ({
+      id: typeof d.id === 'string' ? d.id : '',
+      title: OutlineClient.stripHtml(typeof d.title === 'string' ? d.title : '(无标题)'),
+      url: this.absolutize(typeof d.url === 'string' ? d.url : ''),
+      snippet: '',
+      collectionId: typeof d.collectionId === 'string' ? d.collectionId : '',
+      updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : '',
+      ...(d.parentDocumentId !== undefined && d.parentDocumentId !== null ? { parentDocumentId: String(d.parentDocumentId) } : {}),
+    }))
   }
 
   /** 解析一个文档的完整路径：返回 [集合名, 顶级目录, …, 文档名]（自顶向下）。 */

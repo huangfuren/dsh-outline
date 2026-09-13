@@ -2,7 +2,22 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
-## [Unreleased]
+## [v0.7.1] - 2026-09-14
+
+### Added — 输出内容规范 skill
+
+- **新增「输出内容规范」skill 提供者**：`skills/outline-answer-style/SKILL.md`，规范基于本包 `outline_*` 工具的回答排版（必附跳转链接、按主题分组、重复文档显式标注、末尾保存确认）。
+- **独立加载、故障隔离**：skill 由 `skills-adapter.js` 承担，经 `cordis.patch.yml` 以单独一行 `outline-auto-skills` 挂载；该模块加载失败不会连带拖垮 `outline_*` 工具。
+- **清单声明与依赖**：`dsh.plugin.json` 的 `contributes.skills` 声明 `outline-answer-style`；新增 peer 依赖 `@deepseek-ai/dsh-skill-filesystem`；打包 `files` / `exports` 纳入 `skills` 与 `skills-adapter.js`。
+
+### Changed — 检索性能优化（结果集完全不变）
+- **`all=true` 从「4 次串行分页」改为「一次抓满」**：按服务端单页上限（`limit=100`，超过会被 400 拒绝）单请求抓取，服务端只执行一次检索。同一实例实测 `LB` 5824ms → 3690ms、`迁移` 5392ms → 3655ms（约 **−35%**，4 轮交叉测量取中位）；命中集合与旧实现 **100/100 完全一致**，顺序差异仅来自既有的本地重排 `rerankHits`（已用 `rerankHits(旧结果) == 新结果` 逐条验证）。
+- **实例上限更低时兜底并发分页**：若服务端把 `limit` 压小（返回短页），以实际页长为步长「顺序探测一页 + 余下页面并发（≤4）」补齐；保留「服务端无视 offset → 整页重复即停」的防死循环守卫，坏实例上仍只发 2 次请求。
+- **集合 / 用户 / 子文档分页并发化**：`listCollections` / `listUsers` / `listChildDocuments` 由「逐页串行」改为「首页 + 余页并发（≤4）」，返回顺序与串行完全一致；大工作区（集合或用户 >100）下省掉 N−1 个 RTT。
+- **新增并发闸门** `mapWithConcurrency`：统一把单次调用在飞请求数限制在 4 以内，避免瞬时打爆上游触发 429（重试反而更慢）。
+
+### Fixed — 质量补全（零额外请求）
+- **搜索结果作者名此前一直是空的**：旧实现从 `document.user` 取作者，而 Outline `documents.search` 实际返回的是 `document.createdBy`，导致 `authorName` 恒缺省；现直接取 `createdBy.name`（HTML 转义已剥离），实测 100/100 命中带作者名，且**不需要**额外拉一次 `users.list`（`document.user` + `users.list` 映射保留为兜底）。
 
 ## [v0.7.0] - 2026-09-08
 

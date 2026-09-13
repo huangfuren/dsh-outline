@@ -1,3 +1,9 @@
 - insert:
     - id: outline-auto
       name: 'dsh-outline-auto'
+
+# 输出内容规范 skill 提供者：独立模块，加载本包 skills/ 目录。
+# 与主插件分行挂载，加载失败不会连带拖垮 outline_* 工具。
+- insert:
+    - id: outline-auto-skills
+      name: 'dsh-outline-auto/skills-adapter.js'

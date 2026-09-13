@@ -1,3 +1,10 @@
+/**
+ * 按并发上限批量执行异步任务，返回值保持入参顺序（任一任务抛错则整体抛出，由调用方决定降级）。
+ * 用于把「N 次串行往返」压成「1 次 + 并发」：结果与串行完全一致，只是等待时间被重叠掉。
+ */
+export declare function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]>;
+/** Outline 服务端分页硬上限：limit > 100 会被以 400 "Pagination limit is too large" 拒绝。 */
+export declare const OUTLINE_MAX_PAGE_SIZE = 100;
 export interface OutlineSearchHit {
     id: string;
     title: string;
@@ -6,7 +13,7 @@ export interface OutlineSearchHit {
     collectionId: string;
     updatedAt: string;
     parentDocumentId?: string;
-    /** 作者显示名（users.list 映射；接口不可用或无作者时缺省）。 */
+    /** 作者显示名（取自搜索响应的 createdBy.name；缺省时回退 users.list 映射）。 */
     authorName?: string;
 }
 /** 搜索结果：命中列表 + 该关键词在知识库中的匹配总数（pagination.total）。 */
@@ -72,6 +79,10 @@ export declare class OutlineClient {
     /** searchDocuments 结果的短期缓存（key = 归一化查询参数），同 query 连续提问不重复打 API。 */
     private readonly searchCache;
     private static readonly SEARCH_CACHE_MAX_ENTRIES;
+    /** Outline 服务端分页上限（limit > 100 直接返回 400 "Pagination limit is too large"）。 */
+    private static readonly MAX_PAGE_SIZE;
+    /** 单次工具调用内同时在飞的请求数上限：压住并发以免瞬时打爆上游（触发 429 反而更慢）。 */
+    private static readonly MAX_CONCURRENCY;
     constructor(options: OutlineClientOptions);
     /** 安全校验：拒绝公网明文 http（避免 Token 明文传输），允许 https 以及本地/内网私有地址。 */
     private assertAllowedUrl;
@@ -82,6 +93,13 @@ export declare class OutlineClient {
     /** 请求并返回完整 JSON 响应体（data + pagination 等元数据）。 */
     private requestJson;
     private request;
+    /**
+     * 通用分页拉取：先取第一页拿到 total，再按需并发补齐后续页（并发上限 MAX_CONCURRENCY）。
+     * 结果按 offset 顺序拼接 —— 与逐页串行拉取逐条等价（同集合、同顺序、不漏项），
+     * 但把 N 次串行往返压成「1 次 + 并发」，大集合/多用户实例下省掉 N-1 个 RTT。
+     * 页偏移按上一页实际返回条数推进：服务端若把 limit 压得更小也不会漏页。
+     */
+    private fetchAllPages;
     searchDocuments(query: string, limit: number, collectionId?: string, filters?: {
         userId?: string;
         updatedAfter?: string;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { OutlineClient } from '../src/client.js'
+import { OutlineClient, mapWithConcurrency } from '../src/client.js'
 import { OutlineApiError } from '../src/errors.js'
 
 type StubResponse = { status: number; body: unknown; headers?: Record<string, string> }
@@ -613,5 +613,71 @@ describe('OutlineClient', () => {
     await client.createDocument({ collectionId: 'c', title: '新', text: 'x' }) // 写 → 缓存失效
     await client.searchDocuments('缓存测试', 10)
     expect(calls).toBe(2)
+  })
+
+  it('searchDocuments 优先用响应里的 createdBy.name 作作者名（不再多打一次 users.list）', async () => {
+    let usersCalls = 0
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (url) => {
+        if (url.includes('users.list')) { usersCalls += 1; return { status: 200, body: { data: [], pagination: { total: 0 } } } }
+        return { status: 200, body: {
+          data: [{
+            context: '片段',
+            document: {
+              id: 'd1', title: 'T', url: '/d', collectionId: 'c', updatedAt: '',
+              createdBy: { id: 'u9', name: '刘艺伟' },
+            },
+          }],
+          pagination: { total: 1 },
+        } }
+      }),
+    })
+    const { hits } = await client.searchDocuments('x', 5)
+    expect(hits[0]!.authorName).toBe('刘艺伟')
+    expect(usersCalls).toBe(0) // 关键：作者名零额外请求
+  })
+
+  it('listCollections 多页时并发补齐：顺序与串行一致、不漏项、确实并发', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (url) => {
+        const parsed = new URL(url)
+        const offset = Number(parsed.searchParams.get('offset') ?? '0')
+        const limit = Number(parsed.searchParams.get('limit') ?? '100')
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((r) => setTimeout(r, 5))
+        inFlight -= 1
+        const count = Math.max(0, Math.min(limit, 250 - offset))
+        return { status: 200, body: {
+          data: Array.from({ length: count }, (_, i) => ({ id: `c${offset + i}`, name: `集合${offset + i}`, permission: 'read' })),
+          pagination: { total: 250 },
+        } }
+      }),
+    })
+    const collections = await client.listCollections()
+    expect(collections).toHaveLength(250)
+    expect(collections[0]!.id).toBe('c0')
+    expect(collections[249]!.id).toBe('c249') // 顺序未被并发打乱
+    expect(maxInFlight).toBeGreaterThan(1) // 确实并发拉页，而不是串行 3 次往返
+  })
+
+  it('mapWithConcurrency 保持入参顺序且并发数受上限约束', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const out = await mapWithConcurrency([1, 2, 3, 4, 5, 6, 7], 3, async (n) => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((r) => setTimeout(r, n === 1 ? 8 : 2))
+      inFlight -= 1
+      return n * 10
+    })
+    expect(out).toEqual([10, 20, 30, 40, 50, 60, 70]) // 慢任务在前也不改变顺序
+    expect(maxInFlight).toBeLessThanOrEqual(3)
   })
 })
