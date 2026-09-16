@@ -4,7 +4,7 @@
 
 A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getoutline.com/) knowledge base from your conversation. Give it a keyword — it returns matching documents with **titles, snippets, and links**; ask for one of them and it returns the **full content in Markdown**. Approved write tools can create, update, and delete documents, with an approval prompt before every write.
 
-> Project status: 0.7.0. The current feature set is covered by unit tests, a Mock-server smoke, and a settings-chain integration check. The supported DSH baseline is `0.1.1-rc.2`; older Harness builds are not certified.
+> Project status: 0.7.2. The current feature set is covered by unit tests, a Mock-server smoke, and a settings-chain integration check. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
 
 
 ## The core idea
@@ -35,7 +35,7 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 | --- | --- |
 | Platform | Windows / macOS / Linux |
 | Node.js | 22.19 or newer |
-| DeepSeek Harness | `0.1.1-rc.2` (required baseline) |
+| DeepSeek Harness | `0.1.5-rc.2` (required baseline) |
 | Outline instance | reachable from your machine (intranet / VPN), with an API token (Outline → Settings → API keys) |
 
 ## Installation

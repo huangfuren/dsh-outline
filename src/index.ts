@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-// 类型增强：ctx.approval（ApprovalService）挂在 Context 上
+// 仅需类型增强：ctx.settings（SettingsProvider）与 ctx.approval（ApprovalService）挂在 Context 上。
+// 运行时不 import 这两个包的任何导出——宿主进程提供实现，插件只通过注入的服务对象调用。
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { Config } from './config.js'
 import { OutlineClient } from './client.js'
@@ -17,7 +18,7 @@ export const name = 'dsh-outline-auto'
 export const inject = ['tools']
 
 /** GUI 设置命名空间（设置 → 插件 → 插件配置 的卡片读写它，持久化在 settings.yaml）。 */
-const SETTINGS_NS = settingsNamespace('outline-auto')
+const SETTINGS_NS = 'outline-auto'
 
 export function apply(ctx: Context, config: Config = {} as Config) {
   // 连接配置优先级（与 README 一致）：GUI 卡片（settings.yaml 用户层）→ 环境变量 → 插件配置行。
@@ -73,11 +74,13 @@ export function apply(ctx: Context, config: Config = {} as Config) {
       ? (process.env.OUTLINE_API_TOKEN ? { apiToken: process.env.OUTLINE_API_TOKEN } : {})
       : {}),
   }
-  installSettingsSection(ctx, SETTINGS_NS, Config, settingsBase, {
-    setSource: (current) => {
-      settingsSource = current
-    },
-    onChange: () => {},
+  ctx.inject(['settings'], (sctx) => {
+    sctx.settings.installSection(ctx, SETTINGS_NS, Config, settingsBase, {
+      setSource: (current) => {
+        settingsSource = current
+      },
+      onChange: () => {},
+    })
   })
 
   // 同义词/别名表：settings 用户层 → 插件配置行 → 空（关闭回退）。

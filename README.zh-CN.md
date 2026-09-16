@@ -4,7 +4,7 @@
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.7.0。支持的 DeepSeek Harness 基线为 `0.1.1-rc.2`，Node.js 需要 22.19 或更高版本；支持 Windows / macOS / Linux 三种平台。
+> 当前版本：0.7.2。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；支持 Windows / macOS / Linux 三种平台。
 
 ## 功能
 
@@ -83,7 +83,7 @@ node node_modules/dsh-outline-auto/scripts/repair-profile.mjs --profile-dir "$en
 
 ## 兼容性与发布检查
 
-- 使用 DSH `0.1.1-rc.2` 或更高的同一兼容范围测试；更早版本没有设置槽位和客户端注入兼容保证。
+- 使用 DSH `0.1.5-rc.2` 或更高的同一兼容范围测试；更早版本既没有 `settings.installSection`，也没有客户端注入兼容保证。
 - 执行 `pnpm typecheck`、`pnpm build`、`pnpm test` 和 `node scripts/smoke.mjs`。
 - 压缩包排除 `node_modules`、`.git`、settings 文件、token、内部地址和内部文档名称。
 - 在干净的 `web` profile 中安装 GitHub 地址或压缩包，确认插件列表和插件配置两个入口都可见。

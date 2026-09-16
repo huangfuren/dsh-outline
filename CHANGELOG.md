@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
+## [v0.7.2] - 2026-09-16
+
+### Fixed — 设置卡片在 dsh 0.1.5 下消失
+
+- **根因**：宿主已移除自由函数 `installSettingsSection`，改由 `settings.installSection(owner, ns, schema, base, hooks)` 承担。插件此前按 vendored 的 `0.1.1-rc.2` 类型编写，`tsc` 通过但运行时走进降级分支，`outline-auto` 命名空间从未在宿主 settings 服务上注册 —— 于是 设置 → 插件 → 插件配置 没有卡片，只留下一行降级警告。
+- **迁移**：改为 `ctx.inject(['settings'], (sctx) => sctx.settings.installSection(ctx, 'outline-auto', Config, base, hooks))`。同时删除"降级为 config-only"的兜底分支与告警文案：插件自本版本起硬依赖 dsh ≥ 0.1.5。
+- **契约收紧**：`engines` 与四个 peer 范围统一到 `>=0.1.5-rc.2 <0.2.0`；`dsh.plugin.json` 的 `engines.dsh` 此前仍写 `0.1.1-rc.2`，与实际能力不符，一并修正。
+- **顺带修复**：`skills-adapter.js` 因 peer `@deepseek-ai/dsh-skill-filesystem` 未解析而加载失败，peer 范围对齐后随 `pnpm install` 恢复。
+- **回归防护**：新增 `tests/settings.spec.ts`（3 例）——在真实 `SettingsProvider`（内存子类）上启动插件，断言 ① `settings.describe()` 含 `outline-auto` 命名空间（卡片存在的前提）② 用户层覆盖经 `settings.update` 即时作用于 API 调用 ③ 未配置时报错指向 设置 → 插件 → 插件配置。既有两份测试从未走过 settings 接缝，这正是上次 breakage 能静默发布的原因。
+
+### Verified — 0.1.5 接口逐项对账
+
+- `tools.register(definition): () => void`、`tools/pre-execute` 的 `PreToolDecision`（`kind: 'allow' | 'deny' | 'ask'`）、`approval.request(req): ApprovalOutcome`（`'allowed-once'` 为唯一放行值）、`skill-filesystem` 的 `apply(ctx, config?)` 选项名（`providerName` / `includeDefaultRoots` / `bundledSkillDir` / `watch`）——除已修复的 settings 接缝外，无第二处不匹配。
+
 ## [v0.7.1] - 2026-09-14
 
 ### Added — 输出内容规范 skill

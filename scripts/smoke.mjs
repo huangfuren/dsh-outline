@@ -11,11 +11,19 @@ const port = server.address().port
 const baseUrl = `http://127.0.0.1:${port}`
 
 const tools = []
-// 冒烟只测工具链路，不涉及 settings 服务：ctx.inject 给个空实现，
-// 使 installSettingsSection 静默跳过（settingsSource 保持默认，走 config/env）。
+// 冒烟不连真实宿主：settings 服务用假实现顶上，既让 installSection 不产生副作用，
+// 又能记录参数 —— 下面据此断言接缝确实被走到（lib/ 编译产物的行为证据，不止 grep）。
+const injected = []
+let section = null
 const ctx = {
   tools: { register: (definition) => { tools.push(definition) } },
-  inject: () => () => {},
+  inject: (names, callback) => {
+    injected.push(names.join('+'))
+    if (names.includes('settings')) {
+      callback({ settings: { installSection: (owner, ns, schema, base, hooks) => { section = { owner, ns, base, hooks } } } })
+    }
+    return () => {}
+  },
   on: () => () => {},
   get: (name) => name === 'approval' ? { request: async () => 'allowed-once' } : undefined,
 }
@@ -80,6 +88,23 @@ try {
   check('outline_update_document 参数校验（execute 兜底）', paramError, 'pre-execute 未注册，走 execute 层')
   const tpl = await byName.outline_doc_template.execute({}, exec)
   check('outline_doc_template 返回模板', typeof tpl.template === 'string' && tpl.template.includes('【需求或目标】') && Array.isArray(tpl.sections), JSON.stringify(tpl.sections))
+
+  // —— settings 接缝回归（防 v0.7.1 事故复现：宿主 0.1.5 移除了 installSettingsSection，
+  //    卡片曾静默消失）。断言编译产物确实经 ctx.inject(['settings']) 调到 installSection，
+  //    且它交回的 setSource 能改写运行期读取的配置（写入守卫随之改变）。
+  check('settings 接缝：ctx.inject 申请 settings', injected.includes('settings'), JSON.stringify(injected))
+  check('settings 接缝：installSection(owner=ctx, ns=outline-auto)', section !== null && section.owner === ctx && section.ns === 'outline-auto', section === null ? '未被调用' : section.ns)
+  check('settings 接缝：base 携带插件配置行', section?.base?.writablePaths === '测试集合' && section?.base?.baseUrl === baseUrl)
+  let overridden = 'installSection 未被调用，setSource 无从验证'
+  if (section?.hooks?.setSource) {
+    section.hooks.setSource(() => ({ writablePaths: '别的目录' }))
+    try {
+      await byName.outline_create.execute({ collectionId: 'col-1', title: '冒烟-应被拒', text: '# 冒烟\n正文' }, exec)
+    } catch (error) {
+      overridden = String(error?.message ?? error)
+    }
+  }
+  check('settings 接缝：用户层 setSource 覆盖配置行', overridden.includes('目标不在可写目录内') && overridden.includes('别的目录'), overridden.slice(0, 100))
 } catch (error) {
   console.error('SMOKE ERROR:', error)
   failures++

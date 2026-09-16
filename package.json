@@ -1,6 +1,6 @@
 {
     "name": "dsh-outline-auto",
-    "version": "0.7.1",
+    "version": "0.7.2",
     "description": "DSH web plugin: search and read an Outline knowledge base from conversations, with approved, whitelist-guarded document writes.",
     "type": "module",
     "license": "MIT",
@@ -30,7 +30,7 @@
     ],
     "engines": {
         "node": ">=22.19",
-        "dsh": ">=0.1.1-rc.2 <0.2.0"
+        "dsh": ">=0.1.5-rc.2 <0.2.0"
     },
     "repository": {
         "type": "git",
@@ -55,7 +55,6 @@
         },
         "client": {
             "inject": [
-                "@deepseek-ai/dsh-client-runtime",
                 "@deepseek-ai/dsh-client-ui-settings",
                 "@deepseek-ai/dsh-client-ui-settings-plugins"
             ],
@@ -76,10 +75,10 @@
     },
     "peerDependencies": {
         "@deepseek-ai/cordis": ">=4.0.0",
-        "@deepseek-ai/dsh-settings": ">=0.1.1-rc.2 <0.2.0",
-        "@deepseek-ai/dsh-skill-filesystem": ">=0.1.1-rc.2 <0.2.0",
-        "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
-        "@deepseek-ai/dsh-user-approval": ">=0.1.1-rc.2 <0.2.0"
+        "@deepseek-ai/dsh-settings": ">=0.1.5-rc.2 <0.2.0",
+        "@deepseek-ai/dsh-skill-filesystem": ">=0.1.5-rc.2 <0.2.0",
+        "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2 <0.2.0",
+        "@deepseek-ai/dsh-user-approval": ">=0.1.5-rc.2 <0.2.0"
     },
     "devDependencies": {
         "@types/node": "^24.0.0",

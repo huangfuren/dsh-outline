@@ -5,7 +5,7 @@
 // 卡片外观与官方卡片（终端 / Agent 循环 / 网页搜索）保持一致：可折叠头部 +
 // chevron + 字段组 + 底部操作栏，样式使用同一套 --dsw-alias-* 主题变量。
 // 数据经 settingsScope 服务写入宿主端 settings.yaml 的 outline-auto 命名空间，
-// 宿主插件（lib/index.js）通过 installSettingsSection 读取，保存后实时生效。
+// 宿主插件（lib/index.js）通过 settings.installSection 读取，保存后实时生效。
 window.__ModuleLoader__.load({
 	id: "dsh-outline-auto",
 	factory: (require) => {
