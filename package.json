@@ -75,10 +75,10 @@
     },
     "peerDependencies": {
         "@deepseek-ai/cordis": ">=4.0.0",
-        "@deepseek-ai/dsh-settings": ">=0.1.5-rc.2 <0.2.0",
-        "@deepseek-ai/dsh-skill-filesystem": ">=0.1.5-rc.2 <0.2.0",
-        "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2 <0.2.0",
-        "@deepseek-ai/dsh-user-approval": ">=0.1.5-rc.2 <0.2.0"
+        "@deepseek-ai/dsh-settings": ">=0.1.5-rc.2 <1.0.0",
+        "@deepseek-ai/dsh-skill-filesystem": ">=0.1.5-rc.2 <1.0.0",
+        "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2 <1.0.0",
+        "@deepseek-ai/dsh-user-approval": ">=0.1.5-rc.2 <1.0.0"
     },
     "devDependencies": {
         "@types/node": "^24.0.0",
