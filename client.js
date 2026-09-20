@@ -1,4 +1,4 @@
-// dsh-outline-auto 浏览器半区（单文件模块，无外部构建依赖）
+// dsh-outline 浏览器半区（单文件模块，无外部构建依赖）
 //
 // 职责：在 设置 → 插件 → 插件配置 注册一张配置卡片（settings.plugin.item 槽位，
 // key = 'outline-auto' 命名空间），编辑 Outline 知识库连接的 baseUrl / apiToken / writablePaths。
@@ -7,7 +7,7 @@
 // 数据经 settingsScope 服务写入宿主端 settings.yaml 的 outline-auto 命名空间，
 // 宿主插件（lib/index.js）通过 settings.installSection 读取，保存后实时生效。
 window.__ModuleLoader__.load({
-	id: "dsh-outline-auto",
+	id: "dsh-outline",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -149,11 +149,11 @@ window.__ModuleLoader__.load({
 		/** 注入一次样式（挂到 head，带 data-plugin 便于宿主按插件生命周期清理）。 */
 		function injectStyles() {
 			if (typeof document === "undefined") return;
-			if (document.getElementById("dsh-outline-auto-styles")) return;
+			if (document.getElementById("dsh-outline-styles")) return;
 			const style = document.createElement("style");
-			style.id = "dsh-outline-auto-styles";
-			style.setAttribute("data-plugin", "dsh-outline-auto");
-			style.setAttribute("data-plugin-css", "dsh-outline-auto");
+			style.id = "dsh-outline-styles";
+			style.setAttribute("data-plugin", "dsh-outline");
+			style.setAttribute("data-plugin-css", "dsh-outline");
 			style.textContent = CSS_TEXT;
 			document.head.appendChild(style);
 		}
@@ -495,19 +495,19 @@ window.__ModuleLoader__.load({
 			const settingsScope = ctx.settingsScope;
 			if (slots === undefined || typeof slots.inject !== 'function'
 				|| typeof slots.register !== 'function') {
-				console.warn("[dsh-outline-auto] ctx.slots unavailable; settings card not registered");
+				console.warn("[dsh-outline] ctx.slots unavailable; settings card not registered");
 				return false;
 			}
 			if (locale === undefined || typeof locale.register !== 'function') {
-				console.warn("[dsh-outline-auto] ctx.locale unavailable; settings card not registered");
+				console.warn("[dsh-outline] ctx.locale unavailable; settings card not registered");
 				return false;
 			}
 			if (settingsScope === undefined || typeof settingsScope.bind !== 'function') {
-				console.warn("[dsh-outline-auto] ctx.settingsScope unavailable; settings card not registered");
+				console.warn("[dsh-outline] ctx.settingsScope unavailable; settings card not registered");
 				return false;
 			}
 			try {
-				ctx.effect(() => locale.register(NS, { zh, en }), "dsh-outline-auto: settings card locale");
+				ctx.effect(() => locale.register(NS, { zh, en }), "dsh-outline: settings card locale");
 				const controller = createController(settingsScope.bind({ namespace: NS_KEY }));
 				// keyed 槽位按 priority 升序排列（order 无效）：priority -1 使本卡片排在所有
 				// 默认 priority 0 的卡片之前；使用 inject 声明式注册。
@@ -521,7 +521,7 @@ window.__ModuleLoader__.load({
 				return true;
 			}
 			catch (err) {
-				console.warn("[dsh-outline-auto] activation failed: "
+				console.warn("[dsh-outline] activation failed: "
 					+ (err && err.message ? err.message : err));
 				return false;
 			}
@@ -542,7 +542,7 @@ window.__ModuleLoader__.load({
 
 		const inject = ["slots", "locale", "settingsScope"];
 
-		exports.name = "dsh-outline-auto";
+		exports.name = "dsh-outline";
 		exports.inject = inject;
 		exports.apply = apply;
 		exports.internals = Object.freeze({

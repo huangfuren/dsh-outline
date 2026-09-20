@@ -1,10 +1,10 @@
-# dsh-outline-auto
+# dsh-outline
 
 [English](./README.md)
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.7.4。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（152+ 单元测试）。
+> 当前版本：0.8.0。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（152+ 单元测试）。
 
 ## 功能
 
@@ -23,10 +23,10 @@ DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审
 从公开 GitHub 仓库安装，并固定到最新发布 tag：
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.4
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.0
 ```
 
-`#v0.7.4` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
+`#v0.8.0` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
 
 安装后重启 `dsh web`。发布包已经包含编译后的 `lib/`，正常从 Git 安装时不依赖用户本地构建。安装钩子只会清理当前 DSH profile 中本插件旧名称 `dsh-outline-ai` 的残留引用，不会删除或改写其他插件。
 
@@ -35,7 +35,7 @@ dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.
 本地 checkout 或解压后的目录可以使用：
 
 ```bash
-dsh plugin --profile web add link:/absolute/path/to/dsh-outline-auto
+dsh plugin --profile web add link:/absolute/path/to/dsh-outline
 ```
 
 分发压缩包必须包含 `package.json`、`lib/index.js`、`client.js`、`cordis.patch.yml` 和 `dsh.plugin.json`；构建前先执行：
@@ -51,18 +51,18 @@ pnpm build
 ### 启动失败恢复
 
 ```bash
-dsh plugin --profile web why dsh-outline-auto
+dsh plugin --profile web why dsh-outline
 ```
 
 如果报无法解析 `dsh-outline-ai`，说明 `%USERPROFILE%/.dsh/profiles/web/package.json` 或 profile 的 `cordis.patch.yml` 仍有旧名称。重新在受影响的 profile 中安装本包；启用包生命周期脚本时，安装钩子会自动迁移。如果安装时禁用了脚本，请执行：
 
 ```powershell
-node node_modules/dsh-outline-auto/scripts/repair-profile.mjs --profile-dir "$env:USERPROFILE/.dsh/profiles/web"
+node node_modules/dsh-outline/scripts/repair-profile.mjs --profile-dir "$env:USERPROFILE/.dsh/profiles/web"
 ```
 
 然后运行一次 DSH 插件管理命令刷新 profile lockfile，再重启 `dsh web`。不要把当前包名改回旧 id。
 
-如果插件已加载但看不到卡片，重启 `dsh web`，先在插件列表确认 `dsh-outline-auto`，再打开插件配置。宿主条目失败时不会注册 settings 命名空间。
+如果插件已加载但看不到卡片，重启 `dsh web`，先在插件列表确认 `dsh-outline`，再打开插件配置。宿主条目失败时不会注册 settings 命名空间。
 
 ## 配置
 

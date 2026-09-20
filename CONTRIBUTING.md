@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve dsh-outline-auto.
+Thank you for helping improve dsh-outline.
 
 ## Development setup
 
@@ -25,7 +25,7 @@ Use a local plugin link for manual testing:
 
 ```bash
 pnpm build
-dsh plugin --profile web add link:/absolute/path/to/dsh-outline-auto
+dsh plugin --profile web add link:/absolute/path/to/dsh-outline
 ```
 
 ## Repository layout

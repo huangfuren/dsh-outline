@@ -1,6 +1,6 @@
 {
-  "id": "dsh-external/dsh-outline-auto",
-  "version": "0.7.4",
+  "id": "dsh-external/dsh-outline",
+  "version": "0.8.0",
   "main": "./lib/index.js",
   "description": "在 DSH 对话中搜索并读写用户自己的 Outline 知识库文档（search/get/count/collections/resolve_path/children/template/save_local/create/update/delete）",
   "engines": { "dsh": ">=0.1.5-rc.2 <0.2.0" },

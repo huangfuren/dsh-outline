@@ -1,5 +1,5 @@
 /**
- * DSH bundle adapter for the dsh-outline-auto answer-style skill.
+ * DSH bundle adapter for the dsh-outline answer-style skill.
  *
  * Loads the plugin's own skill tree through the host-owned filesystem skill
  * provider, isolated to this package (no default project/user roots, no

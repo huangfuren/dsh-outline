@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
+## [v0.8.0] - 2026-09-20
+
+### Changed
+
+- **Rename**: 包名与 GitHub 仓库 `dsh-outline-auto` → **`dsh-outline`**。`dsh.plugin.json` 的 id 随之变为 `dsh-external/dsh-outline`，宿主/客户端插件名与客户端 bundle id 同步为 `dsh-outline`。
+  插件运行时实例 id（`outline-auto`、`outline-auto-skills`）**保持不变**，profile 里已有的配置（`baseUrl` / `apiToken` / 可写目录等）无需迁移。
+- 安装地址更新为 `dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.0`；旧地址 `huangfuren/dsh-outline-auto` 会被 GitHub 自动重定向到新仓库。
+- 备注：npm 上 `dsh-outline` 这个名字已被第三方包占用。本插件从未发布到 npm（一直走 GitHub 分发），现有安装方式不受影响；将来若要发 npm，需加 scope（例如 `@huangfuren/dsh-outline`）。
+
 ## [v0.7.4] - 2026-09-20
 
 ### Added

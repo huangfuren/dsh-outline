@@ -1,4 +1,4 @@
-// dsh-outline-auto 热安装/热卸载脚本 —— 安装后无需重启 dsh web
+// dsh-outline 热安装/热卸载脚本 —— 安装后无需重启 dsh web
 //
 // 原理：DSH 对 profile 的 cordis.patch.yml 做热加载（HMR），
 // 把插件作为 insert 行追加进去会即时重组 loader 树（宿主端立即生效，
@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_DIR = resolve(HERE, '..')
 const PKG = JSON.parse(readFileSync(join(PLUGIN_DIR, 'package.json'), 'utf8'))
-const PACKAGE_NAME = PKG.name // dsh-outline-auto
+const PACKAGE_NAME = PKG.name // dsh-outline
 const ROW_ID = 'outline-auto'
 const LEGACY_PACKAGE_NAME = 'dsh-outline-ai'
 const LEGACY_ROW_ID = 'outline-ai'
@@ -224,13 +224,13 @@ function updatePlugin() {
 }
 
 if (remove) {
-  console.log(`dsh-outline-auto 热卸载 → profile: ${profile}`)
+  console.log(`dsh-outline 热卸载 → profile: ${profile}`)
   uninstall()
 } else if (update) {
-  console.log(`dsh-outline-auto 更新 → profile: ${profile}`)
+  console.log(`dsh-outline 更新 → profile: ${profile}`)
   updatePlugin()
 } else {
-  console.log(`dsh-outline-auto 热安装 → profile: ${profile}`)
+  console.log(`dsh-outline 热安装 → profile: ${profile}`)
   migrateLegacyInstall()
   install()
 }

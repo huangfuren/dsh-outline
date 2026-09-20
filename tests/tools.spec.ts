@@ -41,7 +41,7 @@ describe('outline_search', () => {
   })
 
   it('未配置时抛出中文配置错误', async () => {
-    const tool = outlineSearchTool(() => { throw new Error('dsh-outline-auto 未配置：…') }, 10)
+    const tool = outlineSearchTool(() => { throw new Error('dsh-outline 未配置：…') }, 10)
     await expect(tool.execute({ query: 'x' }, exec)).rejects.toThrow('未配置')
   })
 

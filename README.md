@@ -1,10 +1,10 @@
-# dsh-outline-auto
+# dsh-outline
 
 [简体中文](./README.zh-CN.md)
 
 A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getoutline.com/) knowledge base from your conversation. Give it a keyword — it returns matching documents with **titles, snippets, and links**; ask for one of them and it returns the **full content in Markdown**. Approved write tools can create, update, and delete documents, with an approval prompt before every write.
 
-> Project status: 0.7.4. The current feature set is covered by unit tests (152+ tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
+> Project status: 0.8.0. The current feature set is covered by unit tests (152+ tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
 
 ## The core idea
 
@@ -44,10 +44,10 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 Install from the public GitHub repository, pinned to the latest release tag:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.4
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.0
 ```
 
-The `#v0.7.4` suffix pins the exact release; omit it to track the latest commit on `main`.
+The `#v0.8.0` suffix pins the exact release; omit it to track the latest commit on `main`.
 
 Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. Its install hook only removes stale references to this plugin's old package name (`dsh-outline-ai`) from the selected DSH profile; it does not remove or rewrite unrelated plugins.
 
@@ -56,7 +56,7 @@ For an AI-assisted installation, use the DSH plugin manager command above and do
 For a local checkout or extracted archive:
 
 ```bash
-dsh plugin --profile web add link:/absolute/path/to/dsh-outline-auto
+dsh plugin --profile web add link:/absolute/path/to/dsh-outline
 ```
 
 The directory must contain `package.json`, `lib/index.js`, `client.js`, `cordis.patch.yml`, and `dsh.plugin.json`. Build the package before distributing an archive:
@@ -72,18 +72,18 @@ The `scripts/hot-install.mjs` flow is intended for local development only. It cr
 ### Recovery after a failed install
 
 ```bash
-dsh plugin --profile web why dsh-outline-auto
+dsh plugin --profile web why dsh-outline
 ```
 
 If startup reports that it cannot resolve `dsh-outline-ai`, an older renamed entry remains in `%USERPROFILE%/.dsh/profiles/web/package.json` or the profile `cordis.patch.yml`. Reinstall this package in the affected profile; the install hook migrates the stale references when package lifecycle scripts are enabled. For a profile where scripts were disabled, run this explicit repair:
 
 ```powershell
-node node_modules/dsh-outline-auto/scripts/repair-profile.mjs --profile-dir "$env:USERPROFILE/.dsh/profiles/web"
+node node_modules/dsh-outline/scripts/repair-profile.mjs --profile-dir "$env:USERPROFILE/.dsh/profiles/web"
 ```
 
 Then run the DSH plugin manager once to refresh the profile lockfile before restarting `dsh web`. Do not rename the current package back to the old id.
 
-If the package loads but the card is absent, restart `dsh web`, open Settings → Plugins, check **Plugin list** for `dsh-outline-auto`, then check **Plugin configuration**. A failed host entry will not expose its settings namespace.
+If the package loads but the card is absent, restart `dsh web`, open Settings → Plugins, check **Plugin list** for `dsh-outline`, then check **Plugin configuration**. A failed host entry will not expose its settings namespace.
 
 ## Configuration
 

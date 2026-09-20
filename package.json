@@ -1,6 +1,6 @@
 {
-    "name": "dsh-outline-auto",
-    "version": "0.7.4",
+    "name": "dsh-outline",
+    "version": "0.8.0",
     "description": "DSH web plugin: search and read an Outline knowledge base from conversations, with approved, whitelist-guarded document writes.",
     "type": "module",
     "license": "MIT",
@@ -35,11 +35,11 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/huangfuren/dsh-outline-auto.git"
+        "url": "git+https://github.com/huangfuren/dsh-outline.git"
     },
-    "homepage": "https://github.com/huangfuren/dsh-outline-auto#readme",
+    "homepage": "https://github.com/huangfuren/dsh-outline#readme",
     "bugs": {
-        "url": "https://github.com/huangfuren/dsh-outline-auto/issues"
+        "url": "https://github.com/huangfuren/dsh-outline/issues"
     },
     "publishConfig": {
         "access": "public"

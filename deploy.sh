@@ -22,7 +22,7 @@ set -Eeuo pipefail
 # 全局配置
 ######################################
 RELEASE_BRANCH="${RELEASE_BRANCH:-main}"
-PNPM_CACHE="${TMPDIR:-/tmp}/dsh-outline-auto-deploy-pnpm-cache"
+PNPM_CACHE="${TMPDIR:-/tmp}/dsh-outline-deploy-pnpm-cache"
 NPM_PKG="$(node -p 'require("./package.json").name')"
 VERSION="$(node -p 'require("./package.json").version')"
 GIT_TAG="v${VERSION}"

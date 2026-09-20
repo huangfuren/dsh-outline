@@ -5,14 +5,14 @@
 Security fixes are provided for the latest released pre-1.0 version only (`0.7.x`). Install an immutable Git tag and upgrade when a new release is published:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.4
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.0
 ```
 
 ## Reporting a vulnerability
 
 Do not open a public issue for a suspected vulnerability, credential leak, approval bypass, or path-traversal / arbitrary-write problem.
 
-Use GitHub's private vulnerability reporting or a private Security Advisory for `huangfuren/dsh-outline-auto`. Include:
+Use GitHub's private vulnerability reporting or a private Security Advisory for `huangfuren/dsh-outline`. Include:
 
 - affected plugin version plus DSH, Node.js and operating system versions;
 - reproduction steps or a minimal proof of concept;

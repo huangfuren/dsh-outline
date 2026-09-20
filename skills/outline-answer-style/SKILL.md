@@ -9,11 +9,11 @@ description: >-
   save the output to the configured local directory.
 ---
 
-# dsh-outline-auto 输出内容规范
+# dsh-outline 输出内容规范
 
 适用范围：用户提问涉及「知识库 / 文档库 / Outline」时适用（例：「文档库里线下监控
 是什么情况」「知识库有没有关于 X 的文档」「Z 的架构是怎样的」）。**默认走检索，
-不凭记忆答。本规范随 dsh-outline-auto 插件一并安装，作用于所有基于其工具的回答。**
+不凭记忆答。本规范随 dsh-outline 插件一并安装，作用于所有基于其工具的回答。**
 
 ## 0. 触发范围
 用户提问涉及「知识库 / 文档库 / Outline」时适用。**默认走检索，不凭记忆答。**

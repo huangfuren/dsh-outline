@@ -5,7 +5,7 @@ const LEGACY_ID = 'outline-ai'
 const LEGACY_PACKAGE = 'dsh-outline-ai'
 
 function log(message, quiet) {
-  if (!quiet) console.warn(`[dsh-outline-auto] ${message}`)
+  if (!quiet) console.warn(`[dsh-outline] ${message}`)
 }
 
 function isProfileDirectory(value) {
