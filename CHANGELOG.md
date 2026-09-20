@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
+## [Unreleased]
+
+### Added
+
+- **`SECURITY.md`** — 本插件自身的威胁模型：token 存放与传输、写审批与目录白名单的 fail-closed 行为、本地落盘的路径/文件名/长度加固、发布卫生要求，以及私有漏洞上报渠道。
+- **`CONTRIBUTING.md`** — 开发环境、常用命令、仓库结构说明、PR 规则（含双语 README 同步与 lib/ 提交约定）、提交规范 `type(scope)` 与发布流程。
+
+### Changed
+
+- README 首屏不再复述版本发布说明（此前 v0.7.3 的发布详单同时占据中英两版首屏），版本差异一律由 CHANGELOG 承载。
+- README 新增 **Security** 与 **Cross-platform compatibility** 章节，中英文保持对称。
+- `@deepseek-ai/cordis` peerDependency 补上界（`>=4.0.0` → `>=4.0.0 <5`），与其余 peer 范围风格一致；`pnpm-lock.yaml` 同步更新，`pnpm install --frozen-lockfile` 校验通过。
+- 发布包 `files` 清单纳入 `SECURITY.md`。
+
 ## [v0.7.3] - 2026-09-20
 
 ### Added — Cross-Platform Compatibility Enhancements

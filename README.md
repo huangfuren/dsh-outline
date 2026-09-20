@@ -6,27 +6,6 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 
 > Project status: 0.7.3. The current feature set is covered by unit tests (152+ tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
 
-### v0.7.3 Cross-Platform Compatibility Release (2026-09-20)
-
-- **Core Fixes**:
-  - IPv6 loopback addresses (`[::1]`) now correctly recognized as private addresses
-  - Automatic path length protection against Windows MAX_PATH=260 limit (truncates long titles safely)
-  - Platform-specific error messages for filesystem failures (ENOENT, EACCES, ENOSPC)
-  - Windows input habits supported: backslash separators normalized to forward slash
-  
-- **Security Improvements**:
-  - Enhanced filename sanitization: Windows reserved device names (CON/NUL/COM/LPT) protected
-  - Leading/trailing dot and space handling prevents silent truncation on Windows
-  - De-duplication retry capped at 51 attempts to prevent infinite loops
-  
-- **Test Coverage**:
-  - Added 15 new cross-platform boundary case tests (total: 152 tests)
-  - IPv6, MAX_PATH, case-insensitive filesystems all verified through real testing
-  
-- **Documentation**:
-  - New "Cross-Platform Compatibility" section in README describing per-platform features
-
-
 ## The core idea
 
 - The knowledge base is one search away: **you give a keyword, it gives you document links**.
@@ -65,10 +44,10 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 Install from the public GitHub repository, pinned to the latest release tag:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.0
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.3
 ```
 
-The `#v0.7.0` suffix pins the exact release; omit it to track the latest commit on `main`.
+The `#v0.7.3` suffix pins the exact release; omit it to track the latest commit on `main`.
 
 Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. Its install hook only removes stale references to this plugin's old package name (`dsh-outline-ai`) from the selected DSH profile; it does not remove or rewrite unrelated plugins.
 
@@ -150,6 +129,40 @@ The public package must not contain organization-specific collection names, URLs
 ### Workflow: writing a requirement document (common task)
 
 See the full SOP: [`docs/workflow-requirement-doc.zh.md`](docs/workflow-requirement-doc.zh.md) — locate the directory (`outline_resolve_path`) → fetch the template (`outline_doc_template`) → draft → create with approval → verify.
+
+## Security
+
+Every write goes through native DSH approval and a per-deployment directory allow-list, and both fail closed: an unavailable approval service, an error inside the gate, or an unresolvable target path all refuse the write instead of performing it. Public instances must use HTTPS (loopback and private intranet hosts are exempt), API tokens stay in the DSH settings layer and never reach tool output, logs, or the browser half, and `outline_delete` asks for a second confirmation because it is irreversible. Local Markdown saves are confined to the configured save directory, with per-platform filename and path-length hardening.
+
+See [SECURITY.md](./SECURITY.md) for the full threat model and for how to report a vulnerability privately.
+
+## Cross-platform compatibility
+
+Windows, macOS and Linux are all first-class targets; every key code path is platform-agnostic and CI verifies Node 22 / 24 across all three operating systems. Nothing needs to be configured per platform.
+
+**Windows**
+
+- Backslash input is normalized to forward slashes, so `Collection A\Dir 1` resolves like `Collection A/Dir 1`.
+- Filenames are sanitized — characters illegal on Windows are replaced and reserved device names (`CON`, `NUL`, `COM1-9`, `LPT1-9`) are rewritten — and leading/trailing dots and spaces are normalized so names cannot be silently trimmed.
+- Paths that would exceed the Windows `MAX_PATH` limit (260) are truncated while preserving the `.md` extension.
+- Filesystem errors (`ENOENT`, `EACCES`, `ENOSPC`) are translated into actionable hints naming the likely Windows cause.
+- The home-directory fallback chain (`$DSH_HOME` → `$USERPROFILE` → `$HOME` → cwd) matches where Windows keeps user profiles.
+
+**macOS / Linux**
+
+- IPv6 loopback (`http://[::1]:3000`) is recognized as a private address and is not rejected by HTTPS enforcement.
+- De-duplication behaves correctly on case-insensitive filesystems (APFS by default, optional on ext4).
+- Markdown is always written with LF endings, and Unicode filenames survive NFD/NFC differences, so emoji and CJK titles save cleanly.
+- POSIX path limits (1024+ characters) are well above Windows, so titles are not truncated.
+
+**Known boundaries (by design, not defects)**
+
+| Situation | Behavior | Impact |
+| --- | --- | --- |
+| Case-insensitive macOS filesystem | `Test.md` and `test.md` are the same file; a clash becomes `test-2.md` | intended — never overwrite |
+| Windows MAX_PATH (260) | very long titles are truncated to a safe length | protection working |
+| Legacy Notepad before Windows 10 | LF-only files render oddly | use VS Code / Notepad++ |
+| iOS / Android | not supported (Node.js 22.19+ cannot run there) | desktop platforms only |
 
 ## Release checklist
 
