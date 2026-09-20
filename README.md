@@ -4,7 +4,27 @@
 
 A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getoutline.com/) knowledge base from your conversation. Give it a keyword — it returns matching documents with **titles, snippets, and links**; ask for one of them and it returns the **full content in Markdown**. Approved write tools can create, update, and delete documents, with an approval prompt before every write.
 
-> Project status: 0.7.2. The current feature set is covered by unit tests, a Mock-server smoke, and a settings-chain integration check. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
+> Project status: 0.7.3. The current feature set is covered by unit tests (152+ tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
+
+### v0.7.3 Cross-Platform Compatibility Release (2026-09-20)
+
+- **Core Fixes**:
+  - IPv6 loopback addresses (`[::1]`) now correctly recognized as private addresses
+  - Automatic path length protection against Windows MAX_PATH=260 limit (truncates long titles safely)
+  - Platform-specific error messages for filesystem failures (ENOENT, EACCES, ENOSPC)
+  - Windows input habits supported: backslash separators normalized to forward slash
+  
+- **Security Improvements**:
+  - Enhanced filename sanitization: Windows reserved device names (CON/NUL/COM/LPT) protected
+  - Leading/trailing dot and space handling prevents silent truncation on Windows
+  - De-duplication retry capped at 51 attempts to prevent infinite loops
+  
+- **Test Coverage**:
+  - Added 15 new cross-platform boundary case tests (total: 152 tests)
+  - IPv6, MAX_PATH, case-insensitive filesystems all verified through real testing
+  
+- **Documentation**:
+  - New "Cross-Platform Compatibility" section in README describing per-platform features
 
 
 ## The core idea

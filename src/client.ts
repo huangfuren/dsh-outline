@@ -132,8 +132,9 @@ export class OutlineClient {
       throw new Error(`dsh-outline-auto 的 baseUrl 无法解析：${baseUrl}。请填写合法的 Outline 根地址。`)
     }
     if (parsed.protocol === 'https:') return
-    const host = parsed.hostname
-    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1'
+    // Strip brackets from IPv6 for comparison: [::1] → ::1 (Node keeps brackets in hostname!)
+    const host = parsed.hostname.replace(/^\[(.*)\]$/, '$1')
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0'
     const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
     const isPrivate = ipv4 !== null && (
       Number(ipv4[1]) === 10
@@ -143,7 +144,7 @@ export class OutlineClient {
     )
     if (isLocal || isPrivate) return
     throw new Error(
-      `dsh-outline-auto 拒绝非 HTTPS 地址：${baseUrl}。为避免 Token 明文传输，公网地址必须使用 https://（localhost 与内网私有地址除外）。`,
+      `dsh-outline-auto 拒绝非 HTTPS 地址：${baseUrl}。为避免 Token 明文传输，公网地址必须使用 https://（localhost、::1、127.0.0.1、内网私有地址除外）。`,
     )
   }
 

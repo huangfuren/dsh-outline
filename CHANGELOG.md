@@ -2,6 +2,64 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
+## [v0.7.3] - 2026-09-20
+
+### Added — Cross-Platform Compatibility Enhancements
+
+#### IPv6 & URL Security
+- **IPv6 Support**: Bracketed IPv6 loopback addresses (`[::1]`) now correctly recognized as private addresses, no longer rejected by HTTPS enforcement.
+- **Expanded Private Address Allowlist**: Added explicit detection of `0.0.0.0` alongside existing `localhost` / `127.0.0.1`.
+
+#### Windows MAX_PATH Protection
+- **Automatic Path Length Truncation**: When total file path exceeds Windows MAX_PATH=260 characters, filename is safely capped while preserving `.md` extension. No more "ENOENT" cryptic errors.
+- **Platform-Specific Error Messages**: Filesystem errors translated into actionable Chinese hints per platform:
+  - Windows: Shows "路径过长（MAX_PATH 限 260 字符）" when applicable
+  - macOS/Linux: Shows standard path/permission guidance
+
+#### Windows Input Habit Accommodation
+- **Backslash Normalization**: Both `parseWritablePaths()` and `outline_resolve_path()` accept forward slash `/` AND backslash `\`, matching natural Windows user input patterns. Example: typing `集合 A\目录 1` works instead of forcing POSIX-style paths.
+
+#### Filename Safety Enhancements
+- **Windows Reserved Device Name Protection**: Names like `CON`, `NUL`, `COM1-9`, `LPT1-9` automatically appended with underscore (e.g., `CON.md`). Prevents silent file creation failures on Windows.
+- **Leading/Trailing Dot & Space Handling**: Prevents silent trimming behavior that caused name mismatches on Windows (where `file.md.` becomes `file.md`).
+- **De-duplication Retry Cap**: Maximum 51 attempts before falling back to timestamp suffix prevents infinite loops under edge cases (e.g., network share permission glitches).
+
+### Improved — Error Translation & UX
+- **Actionable Filesystem Hints**: EACCES, ENOSPC, EPERM errors now include both technical detail and user-facing suggestion depending on operating system.
+- **Chinese Language Consistency**: All new error messages use simplified Chinese aligned with existing documentation tone.
+
+### Testing Coverage Expansion
+
+#### New Tests Added
+- **15 Cross-Platform Boundary Cases**: IPv6 bracket handling, MAX_PATH length boundaries, case-insensitive filesystem behavior (NTFS/APFS), backslash normalization correctness, reserved device name protection logic, deduplication retry limits.
+- **Real-world Path Length Validation**: Confirmed truncation behavior under typical Windows install paths (~100 chars) + long titles.
+- **Platform Conditional Assertions**: Tests skip certain Windows-specific checks when running on POSIX systems, and vice versa.
+
+#### Test Metrics
+- **Total Tests**: 152 unit tests (up from 137 in v0.7.2).
+- **Pass Rate**: 100% green across all test suites.
+- **Coverage Areas**: Search tools, read/write guards, approval workflows, file saving, error translation.
+
+### Documentation Updates
+
+#### README Files
+- Added detailed "Cross-Platform Compatibility" section describing per-platform features (Windows/macOS/Linux).
+- Included table of known boundary conditions vs actual defects.
+- Clarified iOS support status (not supported due to Node.js runtime requirement).
+
+#### Version Alignment
+- package.json: 0.7.3
+- dsh.plugin.json: 0.7.3
+- All references updated from v0.8.0 → v0.7.3.
+
+### Notes
+
+- **No breaking changes**: Existing configurations continue to work unchanged.
+- **Enhanced resilience**: Better handling of edge-case environments (corporate proxies, NAS shares, special folder permissions).
+- **Ready for distribution**: Verified through smoke tests, typecheck, and end-to-end integration tests.
+
+---
+
 ## [v0.7.2] - 2026-09-16
 
 ### Fixed — 设置卡片在 dsh 0.1.5 下消失

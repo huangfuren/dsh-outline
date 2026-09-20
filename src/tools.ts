@@ -115,6 +115,53 @@ export function resolveLocalSaveDir(configured: string | undefined, env: NodeJS.
 }
 
 /**
+ * 根据平台调整文件名长度（Windows MAX_PATH=260 字符硬限）。
+ * @returns 截断后的文件名（保留.md 后缀）
+ */
+export function capFileNameLength(dir: string, fileName: string): string {
+  const isWindows = process.platform === 'win32'
+  if (!isWindows) return fileName
+  
+  // Windows MAX_PATH: total path <= 260 chars; leave more headroom for trailing NUL + dedupe
+  const maxTotal = 235
+  const currentTotal = path.join(dir, fileName).length
+  if (currentTotal <= maxTotal) return fileName
+  
+  const ext = path.extname(fileName)
+  const nameWithoutExt = fileName.slice(0, -ext.length)
+  const allowedNameLen = Math.max(10, maxTotal - ext.length - dir.length - 5)
+  
+  if (nameWithoutExt.length <= allowedNameLen) return fileName
+  
+  return nameWithoutExt.slice(0, allowedNameLen) + ext
+}
+
+/**
+ * 把文件系统错误翻译为可操作提示（Windows/macOS 区分）。
+ */
+export function formatFsError(err: unknown, filePath: string): string {
+  const isWin = process.platform === 'win32'
+  const e = err as NodeJS.ErrnoException
+  const code = e.code || 'UNKNOWN'
+  
+  const hints: Record<string, string> = {
+    ENOENT: isWin
+      ? `目标目录不存在或路径过长（Windows MAX_PATH 限 260 字符）。请检查配置：「设置 → 插件 → 插件配置」的「本地保存目录」是否为有效短路径？`
+      : `目录不存在：请确认路径正确且当前用户有访问权限。`,
+    EACCES: isWin
+      ? `无写入权限。${filePath} 可能属于管理员目录，请改用用户可写路径（如 C:\\Users\\<你的用户名>\\...）。`
+      : `无写入权限。macOS 可能因沙盒限制，请确认该路径在您的用户目录下（~/...）。`,
+    EPERM: `操作被系统策略阻止（可能是文件保护/权限限制）。`,
+    ENOSPC: `磁盘空间不足，无法写入。`,
+    EDQUOT: `配额用尽（NAS/云盘常见）。`,
+    EROFS: `目标路径只读，无法创建文件。`,
+  }
+  
+  const hint = hints[code] || e.message || '未知错误'
+  return `${hint}\n\n（系统错误码：${code}，路径：${filePath}）`
+}
+
+/**
  * 把内容渲染为保存提示（追加在 outline_search / outline_get_document 结果末尾）。
  * dir 为空表示未配置保存目录 → 提示先配置；否则提示可回复"保存"触发 outline_save_local。
  * 纯函数，可单测。
@@ -127,10 +174,24 @@ export function renderLocalSaveHint(dir: string, kind: 'search' | 'document'): s
   return `\n\n💾 是否将${what}整理成文档存放在本地？如需保存，回复"保存"并给出标题（可选），将存入 ${dir}。`
 }
 
-/** 文件名合法化：替换文件系统非法字符与首尾空白；空串回退为 untitled。 */
+/** 文件名合法化：替换文件系统非法字符与首尾空白；空串回退为 untitled。对 Windows 保留设备名也进行保护（CON/NUL/PRN/COM1-9/LPT1-9）。 */
 export function sanitizeFileName(title: string): string {
-  const cleaned = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim()
-  return cleaned !== '' ? cleaned : 'untitled'
+  // 首先清理控制字符和非法字符
+  let cleaned = title.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim()
+  
+  // 处理前导点、尾随点和空格 → Windows 会静默剪除，但会导致我们的文件名与实际不符
+  cleaned = cleaned.replace(/^\.+/, '').replace(/\.+$/, '').replace(/\s+$/, '')
+  
+  if (cleaned === '') return 'untitled'
+  
+  // Windows 保留设备名防护（不带扩展名的完整名称）
+  // https://learn.microsoft.com/windows/win32/fileio/naming-a-file
+  const reservedWindowsNames = /^(con|prn|aux|nul|com\d|lpt\d)$/i
+  if (reservedWindowsNames.test(cleaned)) {
+    return cleaned + '_'
+  }
+  
+  return cleaned
 }
 
 /** 提取当前日期 YYYY-MM-DD（本地时区），供默认文件名前缀。 */
@@ -151,7 +212,7 @@ export function buildSaveFileName(title: string, now: Date = new Date()): string
   return `${localDateString(now)}-${sanitizeFileName(title)}.md`
 }
 
-/** 冲突时追加序号：name.md → name-2.md → name-3.md …（存在性由传入的 exists 检查，便于测试）。 */
+/** 冲突时追加序号：name.md → name-2.md → name-3.md …（最多尝试 50 次避免无限循环；存在性由传入的 exists 检查，便于测试）。 */
 export async function dedupeFileName(
   dir: string,
   fileName: string,
@@ -160,10 +221,13 @@ export async function dedupeFileName(
   if (!(await exists(path.join(dir, fileName)))) return fileName
   const ext = path.extname(fileName)
   const stem = fileName.slice(0, fileName.length - ext.length)
-  for (let i = 2; ; i++) {
+  for (let i = 2; i <= 51; i++) {
     const candidate = `${stem}-${i}${ext}`
     if (!(await exists(path.join(dir, candidate)))) return candidate
   }
+  // 达到上限：使用时间戳后缀
+  const ts = Date.now().toString(36)
+  return `${stem}-${ts}${ext}`
 }
 
 /** 单次批量保存的文档数上限（防误传全库 id 拖垮 API）。 */
@@ -224,7 +288,12 @@ export function outlineSaveLocalTool(
       const defaultTitle = docs.length === 1 ? docs[0]!.title : `${docs[0]!.title}等${docs.length}篇`
       const title = (args.title ?? '').trim() !== '' ? (args.title ?? '').trim() : defaultTitle
       const markdown = docs.length === 1 ? documentToMarkdown(docs[0]!) : mergeDocumentsToMarkdown(docs, title)
-      const fileName = await dedupeFileName(dir, buildSaveFileName(title), async (p) => {
+      
+      // ⚠️ Windows MAX_PATH=260：先构建原始文件名，再用 capFileNameLength 截断（确保不超过限制）
+      const rawFileName = buildSaveFileName(title)
+      const cappedFileName = capFileNameLength(dir, rawFileName)
+      
+      const fileName = await dedupeFileName(dir, cappedFileName, async (p) => {
         try {
           await stat(p)
           return true
@@ -232,9 +301,16 @@ export function outlineSaveLocalTool(
           return false
         }
       })
+      
       const filePath = path.join(dir, fileName)
-      await mkdir(dir, { recursive: true })
-      await writeFile(filePath, markdown, 'utf8')
+      try {
+        await mkdir(dir, { recursive: true })
+        await writeFile(filePath, markdown, 'utf8')
+      } catch (err) {
+        // 📝 将系统错误码翻译为用户可操作提示（区分 Windows/macOS）
+        throw new Error(formatFsError(err, filePath))
+      }
+      
       return { path: filePath, bytes: Buffer.byteLength(markdown, 'utf8'), documents: docs.length }
     },
   })
@@ -486,9 +562,10 @@ export interface WritablePathEntry {
   segments: string[]
 }
 
-/** 解析可写目录配置（逗号分隔）：`集合名` 或 `集合名/目录A/子目录B`。 */
+/** 解析可写目录配置（逗号分隔，反斜杠视为层级分隔）：`集合名` 或 `集合名/目录 A/子目录 B`。 */
 export function parseWritablePaths(raw: string): WritablePathEntry[] {
-  return raw.split(',').map((x) => x.trim()).filter((x) => x !== '').map((path) => {
+  const normalized = (raw ?? '').replace(/\\+/g, '/')
+  return normalized.split(',').map((x) => x.trim()).filter((x) => x !== '').map((path) => {
     const segments = path.split('/').map((s) => s.trim()).filter((s) => s !== '')
     const collectionName = segments.shift() ?? ''
     return { collectionName, segments }
@@ -682,7 +759,8 @@ export function outlineResolvePathTool(makeClient: () => OutlineClient) {
     },
     async execute(args) {
       const client = makeClient()
-      const segments = args.path.split('/').map((s) => s.trim()).filter((s) => s !== '')
+      // 接受正斜杠和反斜杠（Windows 用户自然输入习惯）
+      const segments = (args.path ?? '').replace(/\\+/g, '/').split('/').map((s) => s.trim()).filter((s) => s !== '')
       if (segments.length === 0) throw new Error('路径不能为空，格式：集合名/目录1/目录2/...')
 
       // 第一段：集合

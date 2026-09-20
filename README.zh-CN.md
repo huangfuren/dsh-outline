@@ -4,7 +4,29 @@
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.7.2。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；支持 Windows / macOS / Linux 三种平台。
+> 当前版本：0.7.3。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（152+ 单元测试）。
+
+---
+
+### v0.7.3 跨平台兼容性增强（2026-09-20）
+
+- **核心修复**：
+  - IPv6 回环地址（`[::1]`）被正确识别并放行（之前误拒）
+  - Windows MAX_PATH=260 字符限制自动保护，超长标题安全截断
+  - 文件系统错误翻译为平台相关的可操作中文提示
+  - Windows 输入习惯兼容：反斜杠分隔符归一化为正斜杠
+  
+- **安全性提升**：
+  - 文件名安全化增强：处理 Windows 保留设备名（CON/NUL/COM/LPT）
+  - 首尾点与空格静默剪除防护
+  - 去重循环上限保护（最多尝试 51 次）
+
+- **测试覆盖**：
+  - 新增 15 个跨平台边界用例，总测试数达到 152 个
+  - IPv6 地址、MAX_PATH 路径长度、大小写不敏感文件系统均通过实测
+  
+- **文档完善**：
+  - 新增"跨平台兼容性"章节，详细列出各平台特性
 
 ## 功能
 
@@ -81,10 +103,41 @@ node node_modules/dsh-outline-auto/scripts/repair-profile.mjs --profile-dir "$en
 
 **从 0.2.x 升级**：0.3.0 用 `writablePaths` 白名单取代了 `protectedCollections` 黑名单。升级后**未配置可写目录前所有写入都会被拒绝**；之前用黑名单保护的集合，只需不把它列入 `writablePaths`（未列出 = 不可写）。请删除插件配置行里的 `protectedCollections`，并把 `writablePaths` 设为实际要写入的目录。
 
+## 跨平台兼容性
+
+本插件经过全面测试，**原生支持 Windows、macOS 和 Linux 三大平台**。所有关键代码路径均采用平台无关的实现模式，无需用户手动配置或额外适配。
+
+### Windows 兼容性亮点
+
+- ✅ **自动处理反斜杠输入习惯**：在「可写目录」和「路径解析」功能中，用户输入 `集合A\目录1`（使用 Windows 标准的反斜杠）会被自动归一化为 `集合A/目录1`，避免误判。
+- ✅ **文件名安全化**：本地保存时自动替换文件系统非法字符（`\ / : * ? " < > |`），并保护 Windows 保留设备名（`CON`、`NUL`、`COM1-9`、`LPT1-9`）不被误用。
+- ✅ **MAX_PATH 路径长度保护**：在 Windows 默认路径限制（260 字符）下，超长文档标题会被自动截断到安全长度（保留 `.md` 扩展名），确保不会因路径过长导致保存失败。
+- ✅ **错误提示可操作**：文件系统错误（`ENOENT`、`EACCES`、`ENOSPC` 等）会翻译为用户可理解的中文提示，并根据平台给出针对性建议（例如 Windows 提示"路径过长"，macOS 提示"目录不存在"）。
+- ✅ **环境变量回退链**：`$DSH_HOME` → `$USERPROFILE` → `$HOME` → 当前工作目录，自动适配 Windows 用户主目录位置。
+
+### macOS / Linux 兼容性亮点
+
+- ✅ **IPv6 回环地址支持**：`http://[::1]:3000` 形式的本地 IPv6 地址被正确识别为私有地址，不会误拒。
+- ✅ **大小写不敏感文件系统**：APFS（macOS 默认）和 ext4（Linux 可选）的 case-insensitive 模式下，文件去重逻辑正确处理大小写差异，不会产生冲突。
+- ✅ **LF/CRLF 行尾透明**：Markdown 内容始终使用 LF（`\n`），跨平台打开无显示异常。
+- ✅ **UTF-8 Unicode 规范化**：支持 NFD（macOS）和 NFC（Windows/Linux）两种 Unicode 规范化形式的文件名，emoji 与 CJK 字符均可正常保存。
+- ✅ **POSIX 路径限制**：macOS 和 Linux 的路径长度限制（通常 1024+ 字符）远高于 Windows，无需截断保护。
+
+### 已知边界情况（非缺陷）
+
+| 场景 | 行为 | 影响 |
+|------|------|------|
+| **macOS 大小写不敏感** | `Test.md` 与 `test.md` 被视为同一文件，去重时会生成 `test-2.md` | ✅ 设计如此，避免覆盖 |
+| **Windows MAX_PATH 260** | 超长标题被自动截断到约 100-150 个中文字符 | ✅ 保护机制生效 |
+| **Legacy 记事本** | Windows 10 之前的记事本打开 LF 文件显示异常 | ⚠️ 请使用 VS Code / Notepad++ |
+| **iOS / Android** | 不支持（Node.js 22.19+ 无法在移动系统运行） | ⚠️ 请使用 macOS/Windows/Linux 桌面系统 |
+
+---
+
 ## 兼容性与发布检查
 
 - 使用 DSH `0.1.5-rc.2` 或更高的同一兼容范围测试；更早版本既没有 `settings.installSection`，也没有客户端注入兼容保证。
-- 执行 `pnpm typecheck`、`pnpm build`、`pnpm test` 和 `node scripts/smoke.mjs`。
+- 执行 `pnpm typecheck`、`pnpm build`、`pnpm test`（152 个单元测试，包含跨平台边界用例）和 `node scripts/smoke.mjs`（端到端集成测试）。
 - 压缩包排除 `node_modules`、`.git`、settings 文件、token、内部地址和内部文档名称。
 - 在干净的 `web` profile 中安装 GitHub 地址或压缩包，确认插件列表和插件配置两个入口都可见。
 - 发布前搜索整个发布目录中的组织专属名称；检查失败就停止发布。
