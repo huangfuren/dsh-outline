@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
-## [Unreleased]
+## [v0.7.4] - 2026-09-20
 
 ### Added
 
@@ -140,7 +140,7 @@ All notable changes to this project are documented here. Release-specific notes 
 - **`update_document` 参数校验前置**：`title` 和 `text` 均为空时 pre-execute 直接 deny，不再走完路径解析再报错；execute 内保留 fail-closed 兜底。
 - **mock server 过滤支持**：`documents.search` 端点补全 `userId` / `updatedAfter` / `collectionId` 过滤逻辑，smoke 可验证。
 
-## [Unreleased]
+## [v0.7.4] - 2026-09-20
 
 ### Added
 

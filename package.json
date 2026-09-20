@@ -1,6 +1,6 @@
 {
     "name": "dsh-outline-auto",
-    "version": "0.7.3",
+    "version": "0.7.4",
     "description": "DSH web plugin: search and read an Outline knowledge base from conversations, with approved, whitelist-guarded document writes.",
     "type": "module",
     "license": "MIT",

@@ -4,7 +4,7 @@
 
 A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getoutline.com/) knowledge base from your conversation. Give it a keyword — it returns matching documents with **titles, snippets, and links**; ask for one of them and it returns the **full content in Markdown**. Approved write tools can create, update, and delete documents, with an approval prompt before every write.
 
-> Project status: 0.7.3. The current feature set is covered by unit tests (152+ tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
+> Project status: 0.7.4. The current feature set is covered by unit tests (152+ tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); older Harness builds are not certified.
 
 ## The core idea
 
@@ -44,10 +44,10 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 Install from the public GitHub repository, pinned to the latest release tag:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.3
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline-auto.git#v0.7.4
 ```
 
-The `#v0.7.3` suffix pins the exact release; omit it to track the latest commit on `main`.
+The `#v0.7.4` suffix pins the exact release; omit it to track the latest commit on `main`.
 
 Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. Its install hook only removes stale references to this plugin's old package name (`dsh-outline-ai`) from the selected DSH profile; it does not remove or rewrite unrelated plugins.
 
