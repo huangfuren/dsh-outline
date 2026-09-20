@@ -18,7 +18,8 @@
         "dsh.plugin.json",
         "README.md",
         "README.zh-CN.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "SECURITY.md"
     ],
     "keywords": [
         "deepseek",
@@ -74,7 +75,7 @@
         "@deepseek-ai/schemastery": ">=3.18.1 <4.0.0"
     },
     "peerDependencies": {
-        "@deepseek-ai/cordis": ">=4.0.0",
+        "@deepseek-ai/cordis": ">=4.0.0 <5",
         "@deepseek-ai/dsh-settings": ">=0.1.5-rc.2 <1.0.0",
         "@deepseek-ai/dsh-skill-filesystem": ">=0.1.5-rc.2 <1.0.0",
         "@deepseek-ai/dsh-tools": ">=0.1.5-rc.2 <1.0.0",
