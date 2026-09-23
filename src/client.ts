@@ -521,4 +521,39 @@ export class OutlineClient {
     }
     return titles
   }
+
+  /**
+   * 拉取一篇文档的摘要原文（前 N 字符的纯文本正文）。
+   * 复用 getDocument 的 60s 缓存，避免 context_search 重复打 API。
+   * 超长文本截断后追加 …标记。
+   */
+  async getDocumentExcerpt(id: string, maxChars = 800): Promise<{ id: string; title: string; url: string; excerpt: string; updatedAt: string }> {
+    const doc = await this.getDocument(id)
+    const excerpt = doc.text.length > maxChars ? doc.text.slice(0, maxChars).trimEnd() + '…' : doc.text
+    return { id: doc.id, title: doc.title, url: doc.url, excerpt, updatedAt: doc.updatedAt }
+  }
+
+  /**
+   * 搜索并批量拉取命中文档的摘要原文（供 outline_context_search 工具使用）。
+   * 并发拉取（上限 MAX_CONCURRENCY），复用 getDocument 缓存。
+   * @returns 搜索结果 + 每条命中附带 excerpt 字段（文档正文前 N 字符）
+   */
+  async searchWithExcerpts(
+    query: string,
+    limit: number,
+    collectionId?: string,
+    filters?: { userId?: string; updatedAfter?: string },
+    excerptChars = 800,
+  ): Promise<OutlineSearchResult & { excerpts: Array<{ id: string; title: string; url: string; excerpt: string; updatedAt: string }> }> {
+    const result = await this.searchDocuments(query, limit, collectionId, filters)
+    if (result.hits.length === 0) {
+      return { ...result, excerpts: [] }
+    }
+    const excerpts = await mapWithConcurrency(
+      result.hits,
+      OutlineClient.MAX_CONCURRENCY,
+      (hit) => this.getDocumentExcerpt(hit.id, excerptChars),
+    )
+    return { ...result, excerpts }
+  }
 }

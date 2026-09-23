@@ -19,18 +19,27 @@ export declare const LOCAL_SAVE_DIRNAME = "outline-auto-saves";
 /** 解析本地保存目录：配置优先，其次 $DSH_HOME/outline-auto-saves，最后 $HOME/outline-auto-saves。 */
 export declare function resolveLocalSaveDir(configured: string | undefined, env?: NodeJS.ProcessEnv): string;
 /**
+ * 根据平台调整文件名长度（Windows MAX_PATH=260 字符硬限）。
+ * @returns 截断后的文件名（保留.md 后缀）
+ */
+export declare function capFileNameLength(dir: string, fileName: string): string;
+/**
+ * 把文件系统错误翻译为可操作提示（Windows/macOS 区分）。
+ */
+export declare function formatFsError(err: unknown, filePath: string): string;
+/**
  * 把内容渲染为保存提示（追加在 outline_search / outline_get_document 结果末尾）。
  * dir 为空表示未配置保存目录 → 提示先配置；否则提示可回复"保存"触发 outline_save_local。
  * 纯函数，可单测。
  */
 export declare function renderLocalSaveHint(dir: string, kind: 'search' | 'document'): string;
-/** 文件名合法化：替换文件系统非法字符与首尾空白；空串回退为 untitled。 */
+/** 文件名合法化：替换文件系统非法字符与首尾空白；空串回退为 untitled。对 Windows 保留设备名也进行保护（CON/NUL/PRN/COM1-9/LPT1-9）。 */
 export declare function sanitizeFileName(title: string): string;
 /** 把文档渲染为 Markdown 正文。 */
 export declare function documentToMarkdown(doc: OutlineDocument): string;
 /** 组装默认文件名：YYYY-MM-DD-<合法化标题>.md */
 export declare function buildSaveFileName(title: string, now?: Date): string;
-/** 冲突时追加序号：name.md → name-2.md → name-3.md …（存在性由传入的 exists 检查，便于测试）。 */
+/** 冲突时追加序号：name.md → name-2.md → name-3.md …（最多尝试 50 次避免无限循环；存在性由传入的 exists 检查，便于测试）。 */
 export declare function dedupeFileName(dir: string, fileName: string, exists: (p: string) => Promise<boolean>): Promise<string>;
 /** 单次批量保存的文档数上限（防误传全库 id 拖垮 API）。 */
 export declare const SAVE_MAX_DOCS = 50;
@@ -39,6 +48,16 @@ export declare function mergeDocumentsToMarkdown(docs: OutlineDocument[], title:
 export declare function outlineSaveLocalTool(getSaveDir: () => string, makeClient: () => OutlineClient): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineSearchTool(makeClient: () => OutlineClient, defaultLimit: number, getSaveDir?: () => string, getSynonyms?: () => Record<string, string[]>): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineListUsersTool(makeClient: () => OutlineClient): import("@deepseek-ai/dsh-tools").ToolDefinition;
+/** outline_context_search 返回的单条带摘要原文的命中。 */
+export interface ContextSearchHit {
+    id: string;
+    title: string;
+    url: string;
+    excerpt: string;
+    updatedAt: string;
+    snippet: string;
+}
+export declare function outlineContextSearchTool(makeClient: () => OutlineClient, defaultLimit: number): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineCountTool(makeClient: () => OutlineClient): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineGetDocumentTool(makeClient: () => OutlineClient, getSaveDir?: () => string): import("@deepseek-ai/dsh-tools").ToolDefinition;
 /** 审批提示文案：完整路径 + 标题 + 内容预览（前 100 字，纯函数可单测）。 */
@@ -52,7 +71,7 @@ export interface WritablePathEntry {
     collectionName: string;
     segments: string[];
 }
-/** 解析可写目录配置（逗号分隔）：`集合名` 或 `集合名/目录A/子目录B`。 */
+/** 解析可写目录配置（逗号分隔，反斜杠视为层级分隔）：`集合名` 或 `集合名/目录 A/子目录 B`。 */
 export declare function parseWritablePaths(raw: string): WritablePathEntry[];
 /** 写入目标的两种形态：创建（目标位置）与更新/删除（目标文档）。 */
 export type WritePathTarget = {

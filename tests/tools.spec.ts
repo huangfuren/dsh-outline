@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import {
   outlineSearchTool, outlineGetDocumentTool, outlineCountTool, outlineListCollectionsTool, outlineResolvePathTool,
   outlineCreateTool, outlineUpdateDocumentTool, outlineDeleteTool, outlineListChildrenTool, outlineDocTemplateTool,
-  outlineSaveLocalTool, outlineListUsersTool, buildCreateApprovalReason, resolveWriteGuard, resolvePathGuard, parseWritablePaths,
+  outlineSaveLocalTool, outlineListUsersTool, outlineContextSearchTool,
+  buildCreateApprovalReason, resolveWriteGuard, resolvePathGuard, parseWritablePaths,
   renderLocalSaveHint, resolveLocalSaveDir, sanitizeFileName, buildSaveFileName, dedupeFileName, documentToMarkdown, mergeDocumentsToMarkdown,
   rerankHits, synonymVariants,
 } from '../src/tools.js'
@@ -794,5 +795,75 @@ describe('outline_save_local（批量 ids）', () => {
     const tool = outlineSaveLocalTool(() => 'D:\\x', () => fakeClient())
     const many = Array.from({ length: 51 }, (_, i) => `d${i}`).join(',')
     await expect(tool.execute({ ids: many }, exec)).rejects.toThrow('一次最多保存')
+  })
+})
+
+describe('outline_context_search', () => {
+  it('execute 返回带 excerpt 的命中结果', async () => {
+    const client = fakeClient({
+      searchDocuments: async (q) => ({ total: 2, hits: [
+        { id: 'd1', title: '文档一', url: '/d1', snippet: '命中片段1', collectionId: '', updatedAt: '2026-01-01' },
+        { id: 'd2', title: '文档二', url: '/d2', snippet: '命中片段2', collectionId: '', updatedAt: '2026-01-02' },
+      ] }),
+      getDocument: async (id) => ({ id, title: id === 'd1' ? '文档一' : '文档二', url: '/' + id, text: '这是文档 ' + id + ' 的正文内容，足够长以测试摘要。'.repeat(20), updatedAt: '2026-01-01' }),
+    } as unknown as OutlineClient)
+    // searchWithExcerpts 内部调用 searchDocuments + getDocument（通过 getDocumentExcerpt）
+    // 需要模拟完整 OutlineClient，包括 searchWithExcerpts
+    const fullClient = Object.create(client)
+    fullClient.searchWithExcerpts = async (query: string, limit: number) => {
+      const result = await client.searchDocuments(query, limit)
+      const excerpts = await Promise.all(result.hits.map((h: any) =>
+        client.getDocument(h.id).then((d: any) => ({ id: d.id, title: d.title, url: d.url, excerpt: d.text.slice(0, 800), updatedAt: d.updatedAt }))
+      ))
+      return { ...result, excerpts }
+    }
+    const tool = outlineContextSearchTool(() => fullClient as unknown as OutlineClient, 10)
+    const result = await tool.execute({ query: '测试' }, exec) as any
+    expect(result.total).toBe(2)
+    expect(result.query).toBe('测试')
+    expect(result.hits).toHaveLength(2)
+    expect(result.hits[0].id).toBe('d1')
+    expect(result.hits[0].excerpt).toContain('正文内容')
+    expect(result.hits[0].excerpt.length).toBeLessThanOrEqual(810) // 800 + …
+  })
+
+  it('零命中时用首词重试', async () => {
+    let callCount = 0
+    const fullClient = {
+      searchWithExcerpts: async (query: string) => {
+        callCount++
+        if (query === '部署 规范') return { total: 0, hits: [], excerpts: [] }
+        if (query === '部署') return { total: 1, hits: [{ id: 'd1', title: '部署文档', url: '/d1', snippet: 's', collectionId: '', updatedAt: '' }], excerpts: [{ id: 'd1', title: '部署文档', url: '/d1', excerpt: '部署相关内容', updatedAt: '' }] }
+        return { total: 0, hits: [], excerpts: [] }
+      },
+    }
+    const tool = outlineContextSearchTool(() => fullClient as unknown as OutlineClient, 10)
+    const result = await tool.execute({ query: '部署 规范' }, exec) as any
+    expect(callCount).toBe(2) // 原词 + 首词重试
+    expect(result.hits).toHaveLength(1)
+    expect(result.query).toBe('部署') // 重试后生效的词
+    expect(result.hits[0].excerpt).toBe('部署相关内容')
+  })
+
+  it('limit 超界被钳制为 SEARCH_MAX_LIMIT', async () => {
+    let seenLimit = 0
+    const fullClient = {
+      searchWithExcerpts: async (_q: string, limit: number) => { seenLimit = limit; return { total: 0, hits: [], excerpts: [] } },
+    }
+    const tool = outlineContextSearchTool(() => fullClient as unknown as OutlineClient, 10)
+    await tool.execute({ query: 'x', limit: 999 }, exec)
+    expect(seenLimit).toBe(25)
+  })
+
+  it('render 输出包含摘要原文', async () => {
+    const fullClient = {
+      searchWithExcerpts: async () => ({ total: 1, hits: [{ id: 'd1', title: 'T', url: '/d', snippet: 's', collectionId: '', updatedAt: '2026-01-01' }], excerpts: [{ id: 'd1', title: 'T', url: '/d', excerpt: '摘要原文内容', updatedAt: '2026-01-01' }] }),
+    }
+    const tool = outlineContextSearchTool(() => fullClient as unknown as OutlineClient, 10)
+    const result = await tool.execute({ query: '测试' }, exec) as any
+    const rendered = tool.output!.render!({ query: '测试' } as never, result as never) as any[]
+    expect(rendered[0].type).toBe('text')
+    expect(rendered[0].text).toContain('摘要原文内容')
+    expect(rendered[0].text).toContain('T')
   })
 })

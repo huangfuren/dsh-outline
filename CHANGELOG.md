@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
+## [Unreleased]
+
+### Added — P0 竞争力升级：自动证据注入
+
+#### `outline_context_search` 工具（自动证据注入）
+- **新增 `outline_context_search` 工具**：搜索知识库并直接返回命中文档的**摘要原文**（前 800 字正文），而非仅片段元数据。模型可一步获取可引用的内容原文，无需再手动调 `outline_get_document` 逐篇拉取。
+- **OutlineClient 新增 `getDocumentExcerpt` / `searchWithExcerpts` 方法**：并发拉取命中文档摘要（上限 4 并发），复用 60s 文档缓存，避免重复打 API。
+- **零命中回退**：多词查询零命中时自动用首词重试，与 `outline_search` 保持一致。
+
+### Changed
+
+- 工具注册顺序调整：`outline_context_search` 排在 `outline_search` 之后，作为增强版搜索。
+
 ## [v0.8.0] - 2026-09-20
 
 ### Changed

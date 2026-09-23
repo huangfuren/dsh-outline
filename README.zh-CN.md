@@ -9,6 +9,7 @@ DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审
 ## 功能
 
 - 搜索、读取、统计文档，并返回可点击的 Outline 链接；支持按作者姓名/邮箱过滤（服务端下推），命中附带作者名。
+- `outline_context_search` 直接返回命中文档的**摘要原文**（正文前 800 字），可一步引用作答，不必再逐篇调 `outline_get_document`；摘要并发拉取（≤4）并复用 60s 文档缓存。
 - 健壮性：429 限流自动重试（指数退避，最多 3 次）；公网地址强制 HTTPS（localhost 与内网私有地址除外）；读取缓存 TTL 可配置（`cacheTtlMs`，默认 60s）且带条目上限。
 - 列出集合、解析“集合/目录/子目录”路径、列出直接子文档。
 - 提供通用需求文档模板。
@@ -122,7 +123,7 @@ node node_modules/dsh-outline/scripts/repair-profile.mjs --profile-dir "$env:USE
 
 ## 工具
 
-`outline_search`、`outline_get_document`、`outline_count`、`outline_list_collections`、`outline_list_users`、`outline_resolve_path`、`outline_list_children`、`outline_doc_template`、`outline_save_local`、`outline_create`、`outline_update_document` 和 `outline_delete`。
+`outline_search`、`outline_context_search`、`outline_get_document`、`outline_count`、`outline_list_collections`、`outline_list_users`、`outline_resolve_path`、`outline_list_children`、`outline_doc_template`、`outline_save_local`、`outline_create`、`outline_update_document` 和 `outline_delete`。
 
 ### 作者过滤（outline_list_users + outline_search 的 author）
 

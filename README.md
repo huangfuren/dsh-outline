@@ -15,7 +15,7 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 
 ## Features
 
-- **Twelve tools** — search (filter by author name, server-side), read, count, list collections, list users, resolve paths, list children, return a document template, save documents to a local Markdown file (one or many, merged with a table of contents), create, update, and delete.
+- **Thirteen tools** — search (filter by author name, server-side), context search (returns each hit's excerpt body text, ready to quote), read, count, list collections, list users, resolve paths, list children, return a document template, save documents to a local Markdown file (one or many, merged with a table of contents), create, update, and delete.
 - **Author-aware search** — `outline_search` accepts an `author` name/email that resolves against `outline_list_users` and is pushed down to Outline as a server-side `userId` filter; hits carry the author's display name when available.
 - **Clickable results** — document links are resolved to absolute URLs against your `baseUrl` (Outline returns relative paths); snippets and titles are cleaned of HTML tags so results render cleanly in chat.
 - **Configurable read cache (default 60s TTL, capped entries)** — re-reading the same document within a session does not hit the API again; write tools invalidate the cache so edits are visible immediately; the TTL is configurable via `cacheTtlMs` and the cache has an entry cap to bound memory.
@@ -112,6 +112,7 @@ The public package must not contain organization-specific collection names, URLs
 | Tool | Description |
 | --- | --- |
 | `outline_search(query, limit?, offset?, collectionId?, author?, userId?, updatedAfter?, all?)` | Keyword search; returns the match **total**, plus title, snippet, document id, author name and link per hit. Optional filters: collection, author (name/email — resolved via users.list and pushed down server-side as `userId`; ambiguous names return the candidate list), updated-after; `offset` skips the first N hits for pagination; `all=true` auto-paginates and de-duplicates up to 100 hits. Identical queries are short-TTL cached (invalidated by writes); multi-word queries with zero hits automatically retry with the first word. |
+| `outline_context_search(query, limit?, collectionId?)` | **Enhanced search** — keyword search that also returns each hit's **excerpt**: the first 800 characters of the document body, not just the server snippet. Lets the model quote content in one step instead of calling `outline_get_document` per hit. Excerpts are fetched concurrently (≤4) and reuse the 60s document cache; multi-word queries with zero hits retry with the first word. |
 | `outline_get_document(id, maxLength?)` | Fetch a document's full Markdown by id; `maxLength` caps the returned text (default 20000). |
 | `outline_count()` | Total number of documents in the knowledge base (`documents.list` total, exact; excludes trashed/deleted — the true total may be slightly higher). |
 | `outline_list_collections()` | List visible collections (id, name, permission, document count). |

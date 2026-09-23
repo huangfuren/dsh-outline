@@ -485,6 +485,110 @@ export function outlineListUsersTool(makeClient: () => OutlineClient) {
   })
 }
 
+/** outline_context_search 返回的单条带摘要原文的命中。 */
+export interface ContextSearchHit {
+  id: string
+  title: string
+  url: string
+  excerpt: string
+  updatedAt: string
+  snippet: string
+}
+
+/** 把带摘要的搜索结果渲染为模型可读文本：标题 + 链接 + 摘要原文（非仅片段）。 */
+function renderContextSearchResult(
+  total: number,
+  hits: ContextSearchHit[],
+  query: string,
+): string {
+  if (hits.length === 0) {
+    return `关键词「${query}」未匹配到文档。可尝试更换关键词（如去掉停用词、改用更短的词）。`
+  }
+  const head = `🔍 知识库检索「${query}」命中 ${total} 篇，已拉取前 ${hits.length} 篇摘要原文：\n`
+  const body = hits.map((hit, i) => {
+    const excerpt = hit.excerpt.length > 0 ? `\n   ${hit.excerpt}` : '\n   （文档正文为空）'
+    return `${i + 1}. [${escapeLinkText(hit.title)}](${wrapUrl(hit.url)})\n   更新：${hit.updatedAt}${excerpt}`
+  }).join('\n\n')
+  const tail = '\n\n以上摘要原文可直接引用作答。如需完整内容，请用 outline_get_document 工具（参数 id）。'
+  return head + body + tail
+}
+
+export function outlineContextSearchTool(
+  makeClient: () => OutlineClient,
+  defaultLimit: number,
+) {
+  return defineTool({
+    name: 'outline_context_search',
+    description: '搜索 Outline 知识库并直接返回命中文档的摘要原文（前 800 字正文，非仅片段），供直接引用作答。比 outline_search 返回更丰富的内容，适合"查一下知识库里有没有相关文档并直接用其内容回答"的场景。搜索零命中时自动用首词/同义词重试。',
+    parameters: {
+      query: { type: 'string', required: true, description: '搜索关键词' },
+      limit: { type: 'integer', description: `拉取摘要的文档数（默认 ${defaultLimit}，最大 ${SEARCH_MAX_LIMIT}）；每篇摘取前 800 字正文` },
+      collectionId: { type: 'string', description: '可选，限定搜索某个集合' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          total: { type: 'integer', required: true, description: '该关键词在知识库中的匹配总数' },
+          query: { type: 'string', required: true, description: '实际生效的搜索词（零命中重试后可能与原词不同）' },
+          hits: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string', required: true },
+                title: { type: 'string', required: true },
+                url: { type: 'string', required: true },
+                excerpt: { type: 'string', required: true, description: '文档正文前 800 字的摘要原文' },
+                updatedAt: { type: 'string', required: true },
+                snippet: { type: 'string', required: true, description: 'Outline 服务端返回的命中片段' },
+              },
+            },
+          },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: renderContextSearchResult(value.total, value.hits, value.query),
+      }],
+    },
+    async execute(args) {
+      const limit = Math.min(SEARCH_MAX_LIMIT, Math.max(1, args.limit ?? defaultLimit))
+      const client = makeClient()
+      const result = await client.searchWithExcerpts(args.query, limit, args.collectionId)
+      const hits: ContextSearchHit[] = result.excerpts.map((ex, i) => ({
+        id: ex.id,
+        title: ex.title,
+        url: ex.url,
+        excerpt: ex.excerpt,
+        updatedAt: ex.updatedAt,
+        snippet: result.hits[i]?.snippet ?? '',
+      }))
+      // 零命中回退：首词重试
+      if (hits.length === 0 && result.total === 0) {
+        const terms = args.query.trim().split(/\s+/)
+        if (terms.length > 1 && terms[0] !== undefined && terms[0] !== '') {
+          const retried = await client.searchWithExcerpts(terms[0], limit, args.collectionId)
+          if (retried.excerpts.length > 0) {
+            return {
+              total: retried.total,
+              query: terms[0],
+              hits: retried.excerpts.map((ex, i) => ({
+                id: ex.id, title: ex.title, url: ex.url, excerpt: ex.excerpt,
+                updatedAt: ex.updatedAt, snippet: retried.hits[i]?.snippet ?? '',
+              })),
+            }
+          }
+        }
+      }
+      return { total: result.total, query: args.query, hits }
+    },
+  })
+}
+
 export function outlineCountTool(makeClient: () => OutlineClient) {
   return defineTool({
     name: 'outline_count',

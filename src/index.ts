@@ -9,6 +9,7 @@ import {
   outlineSearchTool, outlineGetDocumentTool, outlineCountTool, outlineListCollectionsTool,
   outlineResolvePathTool, outlineCreateTool, outlineUpdateDocumentTool, outlineDeleteTool,
   outlineListChildrenTool, outlineDocTemplateTool, outlineSaveLocalTool, outlineListUsersTool,
+  outlineContextSearchTool,
   buildCreateApprovalReason, resolveWriteGuard,
   parseWritablePaths, resolvePathGuard, resolveLocalSaveDir,
 } from './tools.js'
@@ -124,6 +125,7 @@ export function apply(ctx: Context, config: Config = {} as Config) {
   }
   const toolFactories: Array<[string, () => unknown]> = [
     ['outline_search', () => outlineSearchTool(makeClient, config.searchLimit ?? 10, getLocalSaveDir, getSynonyms)],
+    ['outline_context_search', () => outlineContextSearchTool(makeClient, config.searchLimit ?? 10)],
     ['outline_get_document', () => outlineGetDocumentTool(makeClient, getLocalSaveDir)],
     ['outline_count', () => outlineCountTool(makeClient)],
     ['outline_list_collections', () => outlineListCollectionsTool(makeClient)],

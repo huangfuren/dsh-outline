@@ -141,4 +141,33 @@ export declare class OutlineClient {
     listChildDocuments(parentDocumentId: string, pageSize?: number): Promise<OutlineSearchHit[]>;
     /** 解析一个文档的完整路径：返回 [集合名, 顶级目录, …, 文档名]（自顶向下）。 */
     resolveDocumentPath(docId: string): Promise<string[]>;
+    /**
+     * 拉取一篇文档的摘要原文（前 N 字符的纯文本正文）。
+     * 复用 getDocument 的 60s 缓存，避免 context_search 重复打 API。
+     * 超长文本截断后追加 …标记。
+     */
+    getDocumentExcerpt(id: string, maxChars?: number): Promise<{
+        id: string;
+        title: string;
+        url: string;
+        excerpt: string;
+        updatedAt: string;
+    }>;
+    /**
+     * 搜索并批量拉取命中文档的摘要原文（供 outline_context_search 工具使用）。
+     * 并发拉取（上限 MAX_CONCURRENCY），复用 getDocument 缓存。
+     * @returns 搜索结果 + 每条命中附带 excerpt 字段（文档正文前 N 字符）
+     */
+    searchWithExcerpts(query: string, limit: number, collectionId?: string, filters?: {
+        userId?: string;
+        updatedAfter?: string;
+    }, excerptChars?: number): Promise<OutlineSearchResult & {
+        excerpts: Array<{
+            id: string;
+            title: string;
+            url: string;
+            excerpt: string;
+            updatedAt: string;
+        }>;
+    }>;
 }
