@@ -11,9 +11,21 @@ All notable changes to this project are documented here. Release-specific notes 
 - **OutlineClient 新增 `getDocumentExcerpt` / `searchWithExcerpts` 方法**：并发拉取命中文档摘要（上限 4 并发），复用 60s 文档缓存，避免重复打 API。
 - **零命中回退**：多词查询零命中时自动用首词重试，与 `outline_search` 保持一致。
 
+### Added — 面向 dsh 0.1.7-rc.2 的前向兼容
+
+- **配置读取双形态**：新增 `readValue()`。dsh 0.1.7+ 对 volatile 字段递给插件的是 `Volatile<T>`（取值需 `.get()`），旧版本是普通值；`readValue()` 两种形态都能取到原始值，避免升级后 `config.baseUrl.trim()` 拿到包装对象而崩溃。全部 10 处配置读取点均已接入。
+- **Config 字段按能力标记 volatile**：dsh 0.1.7+ 的设置页只收录标记了 volatile 的字段（宿主从 Config schema 自动生成卡片），本插件通过运行时特性探测调用 `.volatile()`；0.1.5 / 0.1.6 的 schemastery 无此方法，原样返回，行为完全不变。
+- **`tests/config.spec.ts`**：新增 10 条护栏测试，覆盖普通值原样返回、`Volatile<T>` 解包、对象/数组不被误判、以及 Config schema 跨版本可构建。
+
 ### Changed
 
 - 工具注册顺序调整：`outline_context_search` 排在 `outline_search` 之后，作为增强版搜索。
+- **设置卡片注册改为按宿主能力选择**：不再无条件调用 `settings.installSection`。dsh ≤ 0.1.6 仍走 `installSection`（保持用户层覆盖能力）；dsh 0.1.7+ 该方法已被宿主移除，本插件检测到缺失时跳过安装、依赖宿主自动生成卡片，避免产生误导性的错误日志。读取宿主 settings 服务仍用直接属性访问（此前尝试改用 `ctx.get('settings')` 会让 smoke 桩取不到服务，已被 smoke 拦下并回退）。
+- `engines.dsh` 由 `>=0.1.5-rc.2 <0.2.0` 放宽为 `>=0.1.5-rc.2 <1.0.0`（`package.json` 与 `dsh.plugin.json` 同步），与其他插件一致；原上限只到 0.1.x，会在后续 0.2 版本不必要地禁用插件。
+
+### Known issues
+
+- `tests/settings.spec.ts` 继承 `SettingsProvider` 并用 `installSection` 做真实注册断言。该 API 在 dsh 0.1.7 已被移除，升级宿主后此测试文件将无法编译，需按新版 Metcalfe 写法重写（改用原生 Config layering 断言）。此为**仅测试侧**待办，不影响运行期。
 
 ## [v0.8.0] - 2026-09-20
 

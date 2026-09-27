@@ -18,5 +18,13 @@ export interface Config {
     /** 同义词/别名表（原词 → 替换词列表）：搜索零命中时自动用替换词重试。例：{ "部署": ["上线", "发布"] } */
     synonyms?: Record<string, string[]>;
 }
+/**
+ * 读取一个可能被宿主包装的配置值。
+ *
+ * dsh 0.1.7+ 对 volatile 字段递给插件的是 `Volatile<T>`（取值需 .get()）；旧版本与
+ * 非 volatile 字段是普通值。两种形态都能取到原始值，避免升级后 `config.x.trim()` 拿到
+ * 包装对象而崩溃。
+ */
+export declare function readValue<T>(value: T): T;
 export declare const Config: Schema<Config>;
 export type { Context };
