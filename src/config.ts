@@ -23,15 +23,26 @@ export interface Config {
 /**
  * 兼容性 shim：把字段标记为 volatile。
  *
- * dsh >= 0.1.7 的宿主从插件声明的 Config schema 自动生成「设置 → 插件 → 插件配置」表单，
- * 但只收录标记了 volatile 的字段（见 settings 的 volatileForm）。
- * dsh 0.1.5 / 0.1.6 的 schemastery 没有 .volatile() 方法，此处原样返回，行为完全不变。
+ * 宿主从插件声明的 Config schema 自动生成设置表单，但只收录标记了 volatile 的字段
+ * （见 `packages/settings/settings/src/schema.ts` 的 `volatileForm` / `isVolatilePath`，
+ * 两者都读 `schema.meta.volatile`）。两条路径：
+ *
+ * - schemastery 带 `.volatile()`（dsh 0.2.x 随附的版本）→ 调它，语义交给上游；
+ * - 不带的（dsh 0.1.7 随附 3.18.1，实测 `typeof Schema.string().volatile === 'undefined'`）
+ *   → 直接写 `meta.volatile`，落点与 `.volatile()` 完全相同。
+ *
+ * ⚠️ 不要用 `.set('meta', …)`：3.18.1 上会以
+ * `Cannot set properties of undefined (setting 'meta')` 失败（字段未先建 meta 时）。
+ * ⚠️ 也不要在拿不到标记时静默跳过 —— 那会让整条命名空间不被宿主投影，
+ * 卡片读到 `status: 'unavailable'` 后渲染成空白。
+ *
+ * dsh 0.1.5 / 0.1.6 完全不读这个标记，写上去无副作用。
  */
 function volatile<T>(schema: T): T {
-  const candidate = schema as unknown as { volatile?: () => unknown } | null
-  if (candidate !== null && candidate !== undefined && typeof candidate.volatile === 'function') {
-    return candidate.volatile() as T
-  }
+  const candidate = schema as unknown as { volatile?: () => unknown; meta?: Record<string, unknown> } | null
+  if (candidate === null || candidate === undefined) return schema
+  if (typeof candidate.volatile === 'function') return candidate.volatile() as T
+  candidate.meta = { ...(candidate.meta ?? {}), volatile: true }
   return schema
 }
 

@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here. Release-specific notes are also published on GitHub Releases.
 
+## [v0.8.1] - 2026-09-30
+
+### Fixed — 设置页签「一片空白」的三处独立根因
+
+- **导出 `Config`**：`lib/index.js` / `src/index.ts` 此前只 `import { Config } from './config.js'`
+  而未 re-export。宿主用**插件模块的 `Config` 导出**作为该命名空间的 schema
+  （`settings.describe()` 读 `entry.fiber.runtime.Config`），拿不到就整条命名空间不被投影，
+  客户端卡片判 `available = false` 后 `return null` —— 页签因此空白。现已 `export { Config }`。
+- **槽位注册补 `locale: NS`**：渲染器只对声明了字典命名空间的条目注入 `props.t`。
+  此前注册 `settings.plugins.tab` 时未声明 `locale`，卡片里的 `t('cardTitle')` 抛
+  `TypeError: t is not a function`，整张卡片被错误边界摘掉（浏览器控制台可见该报错）。
+- **volatile 标记改为直接写 meta**：dsh 0.1.7 随附的 schemastery **3.18.1 没有 `.volatile()`**
+  （实测 `typeof Schema.string().volatile === 'undefined'`）。原 shim「有就调用、没有就原样返回」
+  等于没标，宿主 `volatileForm()` 收到 undefined 后跳过整个命名空间。现在两条路径都覆盖：
+  有 `.volatile()`（0.2.x 随附版本）就调用；没有就写 `schema.meta.volatile = true` —— 宿主
+  `volatileForm` / `isVolatilePath` 读的正是 `schema.meta.volatile`。
+  注意不能用 `.set('meta', …)`，3.18.1 上会以 `Cannot set properties of undefined (setting 'meta')` 失败。
+
+以上三条互相独立，缺任一条页签都会空；对 dsh 0.1.5 / 0.1.6 无影响（它们不读 volatile，且走 `installSection` 分支）。
+
 ## [Unreleased]
 
 ### Added — P0 竞争力升级：自动证据注入

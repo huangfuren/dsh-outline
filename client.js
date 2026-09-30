@@ -1,11 +1,11 @@
 // dsh-outline 浏览器半区（单文件模块，无外部构建依赖）
 //
-// 职责：在 设置 → 插件 → 插件配置 注册一张配置卡片（settings.plugin.item 槽位，
-// key = 'outline-auto' 命名空间），编辑 Outline 知识库连接的 baseUrl / apiToken / writablePaths。
+// 职责：在 设置 → 内置插件 注册一张配置卡片（settings.plugins.tab 槽位，
+// id = 'outline-auto'），编辑 Outline 知识库连接的 baseUrl / apiToken / writablePaths。
 // 卡片外观与官方卡片（终端 / Agent 循环 / 网页搜索）保持一致：可折叠头部 +
 // chevron + 字段组 + 底部操作栏，样式使用同一套 --dsw-alias-* 主题变量。
-// 数据经 settingsScope 服务写入宿主端 settings.yaml 的 outline-auto 命名空间，
-// 宿主插件（lib/index.js）通过 settings.installSection 读取，保存后实时生效。
+// 数据经 configForms 共享表单写入宿主端 settings.yaml 的 outline-auto 命名空间，
+// 宿主插件（lib/index.js）从 Config schema 自动生成的表单读取，保存后实时生效。
 window.__ModuleLoader__.load({
 	id: "dsh-outline",
 	factory: (require) => {
@@ -99,6 +99,9 @@ window.__ModuleLoader__.load({
 		};
 
 		const FIELDS = ["baseUrl", "apiToken", "writablePaths", "localSaveDir"];
+			// 对齐 src/config.ts 的 schema 默认值：0.2.0 的 form.set 没有 unset 对应物，
+			// 「移除」动作写回默认值来还原字段。
+			const DEFAULTS = { baseUrl: "", apiToken: "", writablePaths: "", localSaveDir: "" };
 
 		// 仅用于视觉提示的占位符，永远不会写入设置（敏感值统一掩码处理）。
 		const MASK = "*".repeat(28);
@@ -177,26 +180,48 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 卡片表单控制器：把 settingsScope 命名空间快照投影为卡片状态，
+		 * 卡片表单控制器：把 configForms 共享表单的快照投影为卡片状态，
 		 * 提供 edit/resetField/save/discard/focus/remove 动作（对齐官方 CardActions）。
 		 */
-		function createController(scope) {
+		/**
+		 * 卡片表单控制器：把 configForms 的表单快照投影为卡片状态，
+		 * 提供 edit/resetField/save/discard/focus/remove 动作（对齐官方 CardActions）。
+		 */
+		function createController(form) {
 			let draft = {}; // field -> { text, clear }
 			let saving = false;
 			let failed = false;
 			let saved = false;
 			let focused = {}; // field -> boolean（apiToken 掩码的聚焦状态）
+
+			// 宿主 0.2.0 的表单快照是 { value, writable, ... }，value 已是普通值
+			// （非 Volatile 包装 —— 包装只存在于 Host 进程内的 Config 递交）。
+			// 0.1.6 及更早的 settingsScope 快照是 { status, value, user }，
+			// value 可能仍是 Volatile 包装，用 readValue 兼容两种形态。
+			const readValue = (v) => (v !== null && typeof v === "object"
+				&& typeof v.get === "function" ? v.get() : v);
+			const snapOf = () => {
+				try { return form.getSnapshot() || {}; } catch { return {}; }
+			};
+			// 0.2.0 恒为 ready（表单随 settings 域就绪）；0.1.6 用 status 字段。
+			const isReady = (snap) => snap.status === undefined || snap.status === "ready";
+
+			// ponytail: 必须在 readValue/snapOf/isReady 声明之后创建 store ——
+			// project() 在构造时即被调用，提前声明会撞 TDZ 抛
+			// "Cannot access 'snapOf' before initialization"。
 			const store = createStore(project());
 
 			function fieldState(name) {
-				const snap = scope.getSnapshot();
-				const ready = snap.status === "ready";
+				const snap = snapOf();
+				const ready = isReady(snap);
 				const value = (ready && snap.value) || {};
 				const user = (ready && snap.user) || {};
 				const staged = draft[name];
-				const text = staged !== undefined ? staged.text : (ready ? String(value[name] ?? "") : "");
+				const raw = readValue(value[name]);
+				const text = staged !== undefined ? staged.text
+					: (ready ? String(raw ?? "") : "");
 				const overridden = staged !== undefined ? !staged.clear : user[name] !== undefined;
-				const configured = ready ? String(value[name] ?? "").trim() !== "" : false;
+				const configured = ready ? String(raw ?? "").trim() !== "" : false;
 				// apiToken 掩码：已配置且未聚焦且无草稿 → 星号占位；聚焦后显示空草稿（placeholder 提示替换）。
 				const display = name === "apiToken" && configured && staged === undefined
 					? (focused[name] === true ? "" : MASK)
@@ -205,11 +230,13 @@ window.__ModuleLoader__.load({
 			}
 
 			function project() {
-				const snap = scope.getSnapshot();
-				const ready = snap.status === "ready";
+				const snap = snapOf();
+				const ready = isReady(snap);
 				// 判定“已配置”用已保存的存储值（snap.value），不受未保存草稿影响：
 				// baseUrl 与 apiToken 都已填写才视为已配置。
 				const stored = (ready && snap.value) || {};
+				const baseUrl = String(readValue(stored.baseUrl) ?? "").trim();
+				const apiToken = String(readValue(stored.apiToken) ?? "").trim();
 				const out = {
 					available: ready,
 					writable: snap.writable !== false,
@@ -218,7 +245,7 @@ window.__ModuleLoader__.load({
 					saving,
 					failed,
 					saved,
-					configured: Boolean(String(stored.baseUrl ?? "").trim() && String(stored.apiToken ?? "").trim()),
+					configured: Boolean(baseUrl && apiToken),
 				};
 				for (const name of FIELDS) out[name] = fieldState(name);
 				return out;
@@ -226,9 +253,17 @@ window.__ModuleLoader__.load({
 
 			function emit() { store.set(project()); }
 
-			scope.subscribe(() => emit());
+			if (typeof form.subscribe === "function") form.subscribe(() => emit());
 
 			const clearTransient = () => { saved = false; failed = false; };
+
+			// 写回：0.2.0 走 form.set(key, value)；0.1.6 及更早走 scope.set/unset。
+			// unset 语义（用户层删掉该键、交回 schema 默认值）在 0.2.0 没有直接对应 API，
+			// 用 src/config.ts 的 schema 默认值兜底 —— 对“可被用户改写”的字段等价。
+			const writeField = async (name, value, clear) => {
+				if (typeof form.set === "function") { await form.set(name, clear ? DEFAULTS[name] : value); return; }
+				if (clear) await form.unset(name); else await form.set(name, value);
+			};
 
 			return {
 				store,
@@ -258,20 +293,13 @@ window.__ModuleLoader__.load({
 						for (const name of FIELDS) {
 							const staged = draft[name];
 							if (staged === undefined) continue;
-							if (staged.clear) ops.push({ op: "unset", path: [name] });
-							else if (staged.text !== "") ops.push({ op: "set", path: [name], value: staged.text });
+							ops.push({ name, text: staged.text, clear: staged.clear });
 						}
 						if (ops.length === 0) return;
 						saving = true;
 						failed = false;
 						emit();
-						const run = async () => {
-							for (const op of ops) {
-								if (op.op === "set") await scope.set(op.path[0], op.value);
-								else await scope.unset(op.path[0]);
-							}
-						};
-						run().then(
+						Promise.all(ops.map((op) => writeField(op.name, op.text, op.clear))).then(
 							() => { draft = {}; saving = false; saved = true; emit(); },
 							() => { saving = false; failed = true; emit(); },
 						);
@@ -283,13 +311,13 @@ window.__ModuleLoader__.load({
 						saving = true;
 						failed = false;
 						emit();
-						scope.unset(name).then(
+						writeField(name, "", true).then(
 							() => { saving = false; saved = true; emit(); },
 							() => { saving = false; failed = true; emit(); },
 						);
 					},
-				},
-			};
+					},
+				};
 		}
 
 		/** 与官方 IconChevronDownOutline14 同形的内联 chevron（避免依赖 primitives 包）。 */
@@ -492,35 +520,38 @@ window.__ModuleLoader__.load({
 			injectStyles();
 			const slots = ctx.slots;
 			const locale = ctx.locale;
-			const settingsScope = ctx.settingsScope;
-			if (slots === undefined || typeof slots.inject !== 'function'
-				|| typeof slots.register !== 'function') {
+			if (slots === undefined || typeof slots.inject !== "function"
+				|| typeof slots.register !== "function") {
 				console.warn("[dsh-outline] ctx.slots unavailable; settings card not registered");
 				return false;
 			}
-			if (locale === undefined || typeof locale.register !== 'function') {
+			if (locale === undefined || typeof locale.register !== "function") {
 				console.warn("[dsh-outline] ctx.locale unavailable; settings card not registered");
 				return false;
 			}
-			if (settingsScope === undefined || typeof settingsScope.bind !== 'function') {
-				console.warn("[dsh-outline] ctx.settingsScope unavailable; settings card not registered");
+			// dsh 0.2.0：settingsScope 已删除，改用 configForms 共享表单。
+			if (typeof ctx.configForms?.get !== "function") {
+				console.warn("[dsh-outline] ctx.configForms unavailable; settings card not registered");
 				return false;
 			}
 			try {
 				ctx.effect(() => locale.register(NS, { zh, en }), "dsh-outline: settings card locale");
-				const controller = createController(settingsScope.bind({ namespace: NS_KEY }));
-				// keyed 槽位按 priority 升序排列（order 无效）：priority -1 使本卡片排在所有
-				// 默认 priority 0 的卡片之前；使用 inject 声明式注册。
-				slots.inject("settings.plugin.item", () => slots.register({
-					name: "settings.plugin.item",
-					key: NS_KEY,
-					priority: -1,
+				const form = ctx.configForms.get(NS_KEY);
+				const controller = createController(form);
+				// 设置面板的「内置插件」页签。order 而非 priority 才是排序键。
+				slots.inject("settings.plugins.tab", () => slots.register({
+					name: "settings.plugins.tab",
+					id: NS_KEY,
+					order: -1,
+					// locale 必须声明：渲染器只对声明了字典命名空间的条目注入 props.t，
+					// 缺了它卡片里 `t(...)` 会以 "t is not a function" 抛错，
+					// 整张卡片被错误边界摘掉 —— 表现为页签一片空白。
 					locale: NS,
+					label: () => zh.cardTitle,
 					inject: () => ({ hooks: { outlineAutoCard: controller.store }, ...controller.actions }),
 				}, OutlineCard));
 				return true;
-			}
-			catch (err) {
+			} catch (err) {
 				console.warn("[dsh-outline] activation failed: "
 					+ (err && err.message ? err.message : err));
 				return false;
@@ -533,14 +564,14 @@ window.__ModuleLoader__.load({
 			// the card still mounts across boot-order changes and renames.
 			if (typeof ctx.on === "function") {
 				ctx.on("service-added", (name) => {
-					if (name === "slots" || name === "locale" || name === "settingsScope") {
+					if (name === "slots" || name === "locale" || name === "configForms") {
 						tryActivate(ctx);
 					}
 				});
 			}
 		}
 
-		const inject = ["slots", "locale", "settingsScope"];
+		const inject = ["slots", "locale", "configForms"];
 
 		exports.name = "dsh-outline";
 		exports.inject = inject;

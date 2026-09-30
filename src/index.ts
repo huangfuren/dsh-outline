@@ -4,6 +4,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { Config, readValue } from './config.js'
+// 必须 re-export：宿主用插件模块的 `Config` 导出作为该命名空间的 schema
+// （settings 的 describe() 读 `entry.fiber.runtime.Config`）。只 import 不导出会让
+// volatileForm() 收到 undefined → 整条命名空间不投影 → 客户端卡片判 available=false
+// 后 return null，表现为「内置插件」里该页签一片空白。
+export { Config }
 import { OutlineClient } from './client.js'
 import {
   outlineSearchTool, outlineGetDocumentTool, outlineCountTool, outlineListCollectionsTool,
@@ -95,8 +100,9 @@ export function apply(ctx: Context, config: Config = {} as Config) {
   }
   // 设置卡片注册：两条宿主路径按能力自动选择，不做版本嗅探。
   // - dsh <= 0.1.6：需显式 installSection 发布命名空间/schema，并用 setSource 接住用户层覆盖。
-  // - dsh >= 0.1.7：宿主从插件声明的 Config schema 直接生成卡片，installSection 已被移除，
-  //   因此无需安装（也不会因调用不存在的方法而产生误导性错误日志）。
+  // - dsh >= 0.1.7：宿主从插件声明的 Config schema 直接生成卡片，installSection 已被移除；
+  //   0.2.0 起服务是 SettingsForms（configure/describe/update/...），用户层覆盖由宿主
+  //   合并进 apply 的 config 本身，settingsSource 不再需要接。
   try {
     ctx.inject(['settings'], (sctx) => {
       try {
@@ -104,17 +110,25 @@ export function apply(ctx: Context, config: Config = {} as Config) {
         // cordis 的守卫异常若发生，由下面的 catch 兜住。
         const settings = sctx.settings as unknown as {
           installSection?: (...args: unknown[]) => unknown
+          configure?: (presentation: { auto?: boolean }) => () => void
         } | undefined
-        if (settings === undefined || settings === null || typeof settings.installSection !== 'function') {
-          report(ctx, 'host derives the settings card from Config; no section installation needed')
+        if (settings === undefined || settings === null) {
+          report(ctx, 'settings service unavailable; GUI card will not persist config')
           return
         }
-        settings.installSection(ctx, SETTINGS_NS, Config, settingsBase, {
-          setSource: (current: () => Config) => {
-            settingsSource = current
-          },
-          onChange: () => {},
-        })
+        if (typeof settings.installSection === 'function') {
+          settings.installSection(ctx, SETTINGS_NS, Config, settingsBase, {
+            setSource: (current: () => Config) => {
+              settingsSource = current
+            },
+            onChange: () => {},
+          })
+          return
+        }
+        if (typeof settings.configure === 'function') {
+          // 声明「允许宿主自动生成卡片」；用户层由宿主写回 config，settingsSource 保持空。
+          sctx.effect(() => settings.configure!({ auto: true }), 'outline-auto: settings page policy')
+        }
       } catch (err) {
         report(ctx, 'settings section unavailable; GUI card will not persist config', err)
       }
