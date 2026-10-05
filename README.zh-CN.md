@@ -29,7 +29,7 @@ dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v
 
 `#v0.8.1` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
 
-安装后重启 `dsh web`。发布包已经包含编译后的 `lib/`，正常从 Git 安装时不依赖用户本地构建。安装钩子只会清理当前 DSH profile 中本插件旧名称 `dsh-outline-ai` 的残留引用，不会删除或改写其他插件。
+安装后重启 `dsh web`。发布包已经包含编译后的 `lib/`，正常从 Git 安装时不依赖用户本地构建。本包**不再包含任何安装生命周期脚本**：早期版本带的 `postinstall` 清理钩子会触发 pnpm 的构建脚本审批（`ERR_PNPM_IGNORED_BUILDS`），导致桌面版等新 surface 的安装被中断。
 
 交给 AI 安装时，只使用上面的 DSH 插件管理命令，不要再手动追加 `cordis.patch.yml` 或编辑 `dsh.profile.bundles`。如果启动错误指向其他插件，应单独修复或禁用错误中点名的插件。
 
@@ -52,16 +52,14 @@ pnpm build
 ### 启动失败恢复
 
 ```bash
-dsh plugin --profile web why dsh-outline
+dsh plugin --profile <profile> why dsh-outline
 ```
 
-如果报无法解析 `dsh-outline-ai`，说明 `%USERPROFILE%/.dsh/profiles/web/package.json` 或 profile 的 `cordis.patch.yml` 仍有旧名称。重新在受影响的 profile 中安装本包；启用包生命周期脚本时，安装钩子会自动迁移。如果安装时禁用了脚本，请执行：
+`<profile>` 填你实际使用的 profile 名（网页版通常是 `web`，桌面版是 `desktop`）。
 
-```powershell
-node node_modules/dsh-outline/scripts/repair-profile.mjs --profile-dir "$env:USERPROFILE/.dsh/profiles/web"
-```
+如果报无法解析 `dsh-outline-ai`，说明该 profile 的 `package.json` 或 `cordis.patch.yml` 里还留着 0.8.0 之前的旧包名。本包已不再带自动迁移脚本，请手工删掉那些旧行，再重新安装本包并重启。
 
-然后运行一次 DSH 插件管理命令刷新 profile lockfile，再重启 `dsh web`。不要把当前包名改回旧 id。
+如果安装报 `ERR_PNPM_IGNORED_BUILDS` 或 `allowBuilds: ... set this to true or false`，说明是旧版本包残留的 `postinstall` 钩子所致。升级到 v0.8.2 及以后即可（该钩子已移除）；同时可以把 profile 的 `pnpm-workspace.yaml` 里那条待决的 `allowBuilds` 行删掉。
 
 如果插件已加载但看不到卡片，重启 `dsh web`，先在插件列表确认 `dsh-outline`，再打开插件配置。宿主条目失败时不会注册 settings 命名空间。
 

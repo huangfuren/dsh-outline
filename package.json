@@ -1,6 +1,6 @@
 {
     "name": "dsh-outline",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "description": "DSH web plugin: search and read an Outline knowledge base from conversations, with approved, whitelist-guarded document writes.",
     "type": "module",
     "license": "MIT",
@@ -14,7 +14,6 @@
         "skills",
         "client.js",
         "cordis.patch.yml",
-        "scripts/repair-profile.mjs",
         "dsh.plugin.json",
         "README.md",
         "README.zh-CN.md",
@@ -56,6 +55,8 @@
         },
         "client": {
             "inject": [
+                "@deepseek-ai/dsh-client-ui-slots",
+                "@deepseek-ai/dsh-client-locale",
                 "@deepseek-ai/dsh-client-ui-settings",
                 "@deepseek-ai/dsh-client-ui-settings-plugins"
             ],
@@ -68,8 +69,7 @@
         "test": "vitest run",
         "smoke": "node scripts/smoke.mjs",
         "verify": "pnpm typecheck && pnpm test && node scripts/smoke.mjs",
-        "prepack": "pnpm build",
-        "postinstall": "node scripts/repair-profile.mjs --quiet"
+        "prepack": "pnpm build"
     },
     "dependencies": {
         "@deepseek-ai/schemastery": ">=3.18.1 <4.0.0"

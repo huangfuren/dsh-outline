@@ -22,6 +22,28 @@ All notable changes to this project are documented here. Release-specific notes 
 
 以上三条互相独立，缺任一条页签都会空；对 dsh 0.1.5 / 0.1.6 无影响（它们不读 volatile，且走 `installSection` 分支）。
 
+## [v0.8.2] - 2026-10-05
+
+### Fixed — 桌面版（dsh 0.2.0-rc.2 profile）装不上：安装脚本触发 pnpm 构建审批
+
+- **移除 `postinstall`**（`node scripts/repair-profile.mjs --quiet`）。桌面版「添加插件」走
+  `pnpm add`，而 pnpm 10+ 默认不执行依赖的生命周期脚本，非交互场景下会把这一条报成
+  `ERR_PNPM_IGNORED_BUILDS` 并中断安装：依赖能进 `node_modules`，但插件管理器判定失败、
+  不写入 profile `package.json`，结果插件处于「装了一半」的状态（`node_modules` 有、
+  `bundles` 没有）。桌面 profile 里还会留下 `pnpm-workspace.yaml` 的
+  `allowBuilds: dsh-outline@…: set this to true or false` 待决项。该脚本只清理 0.8.0 之前的
+  旧包名 `dsh-outline-ai`，对当前版本没有任何有效对象，因此直接移除而不是改成审批白名单。
+- `scripts/repair-profile.mjs` 一并移出 `files`：不再随包分发，仓库内仅保留为可选的手动工具。
+- 文档：「启动失败恢复」改为手工清理旧行 + 说明 `ERR_PNPM_IGNORED_BUILDS` 的成因；
+  安装章节改为「本包不含安装生命周期脚本」。
+
+### Changed — 客户端注入声明补齐
+
+- `dsh.client.inject` 增加 `@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-locale`。
+  卡片运行期 `inject` 的是 `slots` / `locale` / `configForms` 三个服务，此前只声明了
+  `dsh-client-ui-settings`（configForms 的提供方）与 `dsh-client-ui-settings-plugins`，
+  依赖它们的传递顺序是隐式的。显式声明后模块图不再依赖宿主当前的 bundle 组合方式。
+
 ## [Unreleased]
 
 ### Added — P0 竞争力升级：自动证据注入

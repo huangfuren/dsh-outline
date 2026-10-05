@@ -49,7 +49,7 @@ dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v
 
 The `#v0.8.1` suffix pins the exact release; omit it to track the latest commit on `main`.
 
-Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. Its install hook only removes stale references to this plugin's old package name (`dsh-outline-ai`) from the selected DSH profile; it does not remove or rewrite unrelated plugins.
+Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. This package ships **no install lifecycle scripts**: the `postinstall` cleanup hook it used to carry trips pnpm's build-script approval (`ERR_PNPM_IGNORED_BUILDS`), which aborts installation on newer surfaces such as the desktop app.
 
 For an AI-assisted installation, use the DSH plugin manager command above and do not manually add a second `cordis.patch.yml` entry or edit `dsh.profile.bundles`. If startup still fails and the error names another plugin, repair or disable that named plugin separately.
 
@@ -72,16 +72,14 @@ The `scripts/hot-install.mjs` flow is intended for local development only. It cr
 ### Recovery after a failed install
 
 ```bash
-dsh plugin --profile web why dsh-outline
+dsh plugin --profile <profile> why dsh-outline
 ```
 
-If startup reports that it cannot resolve `dsh-outline-ai`, an older renamed entry remains in `%USERPROFILE%/.dsh/profiles/web/package.json` or the profile `cordis.patch.yml`. Reinstall this package in the affected profile; the install hook migrates the stale references when package lifecycle scripts are enabled. For a profile where scripts were disabled, run this explicit repair:
+Pass the profile you actually use — `web` for the browser surface, `desktop` for the desktop app.
 
-```powershell
-node node_modules/dsh-outline/scripts/repair-profile.mjs --profile-dir "$env:USERPROFILE/.dsh/profiles/web"
-```
+If startup reports that it cannot resolve `dsh-outline-ai`, an older renamed entry remains in that profile's `package.json` or `cordis.patch.yml`. This package no longer ships an automatic migration script: delete those stale lines by hand, reinstall the package, and restart.
 
-Then run the DSH plugin manager once to refresh the profile lockfile before restarting `dsh web`. Do not rename the current package back to the old id.
+If the install fails with `ERR_PNPM_IGNORED_BUILDS`, or the profile's `pnpm-workspace.yaml` grows an `allowBuilds: … set this to true or false` entry for this package, the cause is the `postinstall` hook of a pre-v0.8.2 release. Upgrade to v0.8.2 or later (the hook is gone) and drop the pending `allowBuilds` line.
 
 If the package loads but the card is absent, restart `dsh web`, open Settings → Plugins, check **Plugin list** for `dsh-outline`, then check **Plugin configuration**. A failed host entry will not expose its settings namespace.
 
