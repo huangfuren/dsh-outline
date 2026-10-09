@@ -1,0 +1,8 @@
+# 依赖更新：每周检查一次 npm 依赖（含 devDependencies），有更新就开 PR，由 CI 决定能否合入。
+# 本仓库使用 pnpm（提交了 pnpm-lock.yaml），Dependabot 会同步更新 lockfile。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
