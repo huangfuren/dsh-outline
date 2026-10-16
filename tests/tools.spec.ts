@@ -9,6 +9,8 @@ import {
   buildCreateApprovalReason, resolveWriteGuard, resolvePathGuard, parseWritablePaths,
   renderLocalSaveHint, resolveLocalSaveDir, sanitizeFileName, buildSaveFileName, dedupeFileName, documentToMarkdown, mergeDocumentsToMarkdown,
   rerankHits, synonymVariants,
+  assertKnownWriteArgs, CREATE_ARG_KEYS, UPDATE_ARG_KEYS, DELETE_ARG_KEYS,
+  detectTruncatedRewrite, checkSaveDir,
 } from '../src/tools.js'
 import { OutlineApiError } from '../src/errors.js'
 import type { OutlineClient } from '../src/client.js'
@@ -273,9 +275,65 @@ describe('outline_update_document', () => {
     await expect(tool.execute({ id: 'd1', text: 'x' }, exec)).rejects.toThrow('不在可写目录内')
   })
   // 参数校验在 pre-execute 前置拦截；execute 内仍保留 fail-closed 兜底。
-  it('至少需要 title 或 text', async () => {
+  it('三者都没有（title/text/publish）→ 抛错', async () => {
     const tool = outlineUpdateDocumentTool(() => fakeClient(), () => '集合A')
     await expect(tool.execute({ id: 'd1' }, exec)).rejects.toThrow('至少需要')
+  })
+  it('只改 publish（不动正文）→ 允许并透传', async () => {
+    let seen: any
+    const tool = outlineUpdateDocumentTool(() => fakeClient({
+      getDocument: async () => ({ id: 'd1', title: 'T', url: '/d', text: 'x', updatedAt: '', collectionId: 'col-1' }),
+      listCollections: async () => [{ id: 'col-1', name: '集合A', permission: 'read_write' }],
+      resolveDocumentPath: async () => ['集合A', 'T'],
+      updateDocument: async (id, input) => { seen = input; return { id, url: '/d', title: 'T', published: false } },
+    }), () => '集合A')
+    await tool.execute({ id: 'd1', publish: false }, exec)
+    expect(seen.publish).toBe(false)
+  })
+  it('append: true 透传到客户端（追加不覆盖）', async () => {
+    let seen: any
+    const tool = outlineUpdateDocumentTool(() => fakeClient({
+      getDocument: async () => ({ id: 'd1', title: 'T', url: '/d', text: '原文', updatedAt: '', collectionId: 'col-1' }),
+      listCollections: async () => [{ id: 'col-1', name: '集合A', permission: 'read_write' }],
+      resolveDocumentPath: async () => ['集合A', 'T'],
+      updateDocument: async (id, input) => { seen = input; return { id, url: '/d', title: 'T', published: true } },
+    }), () => '集合A')
+    await tool.execute({ id: 'd1', text: '\n追加', append: true }, exec)
+    expect(seen).toEqual({ title: undefined, text: '\n追加', append: true, publish: undefined })
+  })
+})
+
+describe('detectTruncatedRewrite（读→改→写截断护栏）', () => {
+  const long = 'A'.repeat(3000) + 'B'.repeat(3000)
+
+  it('新正文恰为 get_document 默认上限 20000 且原文更长 → 告警', () => {
+    const original = 'x'.repeat(25000)
+    const warning = detectTruncatedRewrite(original, original.slice(0, 20000))
+    expect(warning).not.toBeNull()
+    expect(warning).toContain('20000')
+    expect(warning).toContain('5000')
+    expect(warning).toContain('append: true')
+  })
+
+  it('新正文是原文精确前缀且丢失 ≥1000 字符 → 告警', () => {
+    const warning = detectTruncatedRewrite(long, long.slice(0, 4000))
+    expect(warning).not.toBeNull()
+    expect(warning).toContain('精确前缀')
+    expect(warning).toContain('2000')
+  })
+
+  it('尾部小幅删减（丢失 <1000 字符）→ 不打扰', () => {
+    expect(detectTruncatedRewrite(long, long.slice(0, long.length - 100))).toBeNull()
+  })
+
+  it('整体重写（非前缀，非上限）→ 不告警', () => {
+    expect(detectTruncatedRewrite(long, '完全重写的短正文')).toBeNull()
+  })
+
+  it('变长、等长、空串 → 不告警', () => {
+    expect(detectTruncatedRewrite('abc', 'abcd')).toBeNull()
+    expect(detectTruncatedRewrite('abc', 'abc')).toBeNull()
+    expect(detectTruncatedRewrite(long, '')).toBeNull()
   })
 })
 
@@ -739,6 +797,12 @@ describe('outline_save_local（批量 ids）', () => {
     const tool = outlineSaveLocalTool(() => '', () => fakeClient())
     await expect(tool.execute({ ids: 'd1' }, exec)).rejects.toThrow('未配置')
   })
+  it('落盘目录是磁盘/系统目录时拒绝（安全带）', async () => {
+    for (const dir of ['C:\\', 'C:\\Windows\\System32', '/etc']) {
+      const tool = outlineSaveLocalTool(() => dir, () => fakeClient())
+      await expect(tool.execute({ ids: 'd1' }, exec)).rejects.toThrow('拒绝写入')
+    }
+  })
   it('ids 为空或全空白时拒绝', async () => {
     const tool = outlineSaveLocalTool(() => 'D:\\x', () => fakeClient())
     await expect(tool.execute({ ids: ' , , ' }, exec)).rejects.toThrow('至少一个文档 id')
@@ -865,5 +929,151 @@ describe('outline_context_search', () => {
     expect(rendered[0].type).toBe('text')
     expect(rendered[0].text).toContain('摘要原文内容')
     expect(rendered[0].text).toContain('T')
+  })
+})
+
+describe('checkSaveDir（本地落盘目录安全带）', () => {
+  it('常规用户目录放行', () => {
+    expect(checkSaveDir('D:/outline-saves')).toBeNull()
+    expect(checkSaveDir('C:\\Users\\me\\outline')).toBeNull()
+    expect(checkSaveDir('/home/me/outline')).toBeNull()
+    expect(checkSaveDir('')).toBeNull()
+  })
+  it('磁盘根 / 文件系统根 / 共享根拒绝', () => {
+    expect(checkSaveDir('C:\\')).toContain('磁盘根目录')
+    expect(checkSaveDir('d:/')).toContain('磁盘根目录')
+    expect(checkSaveDir('/')).toContain('根目录')
+    expect(checkSaveDir('//server/share')).toContain('共享根目录')
+  })
+  it('系统目录（含子目录）拒绝', () => {
+    expect(checkSaveDir('C:\\Windows\\System32')).toContain('系统目录')
+    expect(checkSaveDir('C:/Program Files/outline')).toContain('系统目录')
+    expect(checkSaveDir('/etc/outline')).toContain('系统目录')
+    expect(checkSaveDir('/usr/local/share')).toContain('系统目录')
+  })
+  it('名字相似但不在系统目录下的路径放行', () => {
+    expect(checkSaveDir('D:/Windows-old/saves')).toBeNull()
+    expect(checkSaveDir('D:/etcetera')).toBeNull()
+  })
+
+  // 回归：纯文本比对会被 `..` 绕过（字面不以盘根结尾，但 path.join 时内核解析 `..` 落到盘根）
+  it('含 .. 的路径折叠后再判定，绕过不了根目录与系统目录', () => {
+    expect(checkSaveDir('D:/saves/../..')).toContain('磁盘根目录')
+    expect(checkSaveDir('D:/saves/../../')).toContain('磁盘根目录')
+    expect(checkSaveDir('D:/saves/sub/../../..')).toContain('磁盘根目录')
+    expect(checkSaveDir('C:/Users/../Windows/System32')).toContain('系统目录')
+    expect(checkSaveDir('/home/../etc/cron.d')).toContain('系统目录')
+    expect(checkSaveDir('/home/../..')).toContain('根目录')
+  })
+
+  // 回归：带盘符的系统目录列表在 Windows 装在非 C 盘时会整体失效
+  it('非 C 盘的系统目录同样拒绝（判定与盘符无关）', () => {
+    expect(checkSaveDir('D:/Windows/System32')).toContain('系统目录')
+    expect(checkSaveDir('E:/Program Files/outline')).toContain('系统目录')
+    expect(checkSaveDir('Z:/programdata/outline')).toContain('系统目录')
+  })
+
+  it('折叠后仍指向合法用户子目录的路径放行', () => {
+    expect(checkSaveDir('D:/a/b/../c')).toBeNull()
+    expect(checkSaveDir('D:/outline-saves/./nested/')).toBeNull()
+  })
+})
+
+describe('写工具 execute 兜底取新鲜文档（与审批闸同源，不用 60s 缓存）', () => {
+  const doc = (id: string) => ({ id, title: 'T', url: '/d', text: 'x', updatedAt: '', collectionId: 'col-1' })
+  const collections = async () => [{ id: 'col-1', name: '集合A', permission: 'read_write' }]
+
+  it('outline_update_document 以 force=true 取文档', async () => {
+    const seen: Array<boolean | undefined> = []
+    const tool = outlineUpdateDocumentTool(() => fakeClient({
+      getDocument: async (id: string, force?: boolean) => { seen.push(force); return doc(id) },
+      listCollections: collections,
+      resolveDocumentPath: async () => ['集合A', 'T'],
+      updateDocument: async (id: string) => ({ id, url: '/d', title: 'T', published: true }),
+    }), () => '集合A')
+    await tool.execute({ id: 'd1', title: '新' }, exec)
+    expect(seen).toEqual([true])
+  })
+
+  it('outline_delete 以 force=true 取文档', async () => {
+    const seen: Array<boolean | undefined> = []
+    const tool = outlineDeleteTool(() => fakeClient({
+      getDocument: async (id: string, force?: boolean) => { seen.push(force); return doc(id) },
+      listCollections: collections,
+      resolveDocumentPath: async () => ['集合A', 'T'],
+      deleteDocument: async () => ({ success: true }),
+    }), () => '集合A', async () => true)
+    await tool.execute({ id: 'd1' }, { agent: {}, callId: 'c' } as never)
+    expect(seen).toEqual([true])
+  })
+
+  it('读工具 outline_get_document 仍走缓存（force 缺省）', async () => {
+    const seen: Array<boolean | undefined> = []
+    const tool = outlineGetDocumentTool(() => fakeClient({
+      getDocument: async (id: string, force?: boolean) => { seen.push(force); return doc(id) },
+    }))
+    await tool.execute({ id: 'd1' }, exec)
+    expect(seen).toEqual([undefined])
+  })
+})
+
+describe('assertKnownWriteArgs（写工具拒绝未声明的参数）', () => {
+  it('无未知键时不抛', () => {
+    expect(() => assertKnownWriteArgs('t', { id: 'a', title: 'b' }, ['id', 'title'])).not.toThrow()
+    expect(() => assertKnownWriteArgs('t', {}, ['id'])).not.toThrow()
+  })
+
+  it('空参数对象不抛', () => {
+    expect(() => assertKnownWriteArgs('t', {} as Record<string, unknown>, ['id'])).not.toThrow()
+  })
+
+  it('列出全部未知键并给出可用参数', () => {
+    try {
+      assertKnownWriteArgs('outline_update_document', { id: 'a', collectionId: 'c', parentDocumentId: 'p' }, UPDATE_ARG_KEYS)
+      throw new Error('应当抛错')
+    } catch (e) {
+      const message = (e as Error).message
+      expect(message).toContain('outline_update_document 不接受参数')
+      expect(message).toContain('"collectionId"')
+      expect(message).toContain('"parentDocumentId"')
+      expect(message).toContain('可用参数：id、title、text、append、publish')
+    }
+  })
+})
+
+describe('写工具对未知参数的 fail-closed 行为（回归：静默成功但语义被丢弃）', () => {
+  const withelistClient = (overrides: Partial<OutlineClient> = {}) => fakeClient({
+    listCollections: async () => [{ id: 'col-1', name: '测试集合', permission: 'read_write' }],
+    resolveDocumentPath: async () => ['测试集合', '目录', '文档'],
+    createDocument: async () => ({ id: 'new-1', url: '/new', title: 'T', published: true }),
+    updateDocument: async () => ({ id: 'doc-1', url: '/d', title: 'T', published: true }),
+    ...overrides,
+  } as never)
+
+  it('outline_create 传 append → 抛错且不发起创建', async () => {
+    let called = false
+    const tool = outlineCreateTool(() => withelistClient({
+      createDocument: async () => { called = true; return { id: 'x', url: '/x', title: 'T', published: true } },
+    } as never), () => '测试集合')
+    await expect(tool.execute({ collectionId: 'col-1', title: 'T', text: 'x', append: true } as never, exec)).rejects.toThrow('不接受参数')
+    expect(called).toBe(false)
+  })
+
+  it('outline_update_document 传 collectionId（移动文档，未实现）→ 抛错而非静默忽略', async () => {
+    let called = false
+    const tool = outlineUpdateDocumentTool(() => withelistClient({
+      updateDocument: async () => { called = true; return { id: 'doc-1', url: '/d', title: 'T', published: true } },
+    } as never), () => '测试集合')
+    await expect(tool.execute({ id: 'doc-1', text: 'x', collectionId: 'col-2' } as never, exec)).rejects.toThrow('不接受参数')
+    expect(called).toBe(false)
+  })
+
+  it('outline_delete 传额外键 → 抛错且不删除', async () => {
+    let called = false
+    const tool = outlineDeleteTool(() => withelistClient({
+      deleteDocument: async () => { called = true; return { success: true } },
+    } as never), () => '测试集合', async () => true)
+    await expect(tool.execute({ id: 'doc-1', force: true } as never, exec)).rejects.toThrow('不接受参数')
+    expect(called).toBe(false)
   })
 })

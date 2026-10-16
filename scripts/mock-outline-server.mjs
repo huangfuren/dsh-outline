@@ -82,15 +82,24 @@ export function createMockOutlineServer() {
         const doc = DOCS.find((d) => d.id === parsed.id)
         if (!doc) { send(404, { ok: false, error: 'not_found' }); return }
         if (parsed.title !== undefined) doc.title = parsed.title
-        if (parsed.text !== undefined) doc.text = parsed.text
-        send(200, { data: { id: doc.id, title: doc.title, url: doc.url, published: true } })
+        // append: true 走 Outline 原生追加语义（不覆盖原文）—— 用于验证长文改动路径
+        if (parsed.text !== undefined) doc.text = parsed.append === true ? doc.text + parsed.text : parsed.text
+        send(200, {
+          data: {
+            id: doc.id, title: doc.title, url: doc.url,
+            published: parsed.publish !== undefined ? parsed.publish : true,
+          },
+        })
         return
       }
       if (req.url === '/api/documents.delete') {
+        // id 含 unconfirmed → 模拟"200 但无成功标记"的畸形响应，用于验证插件不会谎报已删除
+        if (String(parsed.id).includes('unconfirmed')) { send(200, { data: {} }); return }
         const idx = DOCS.findIndex((d) => d.id === parsed.id)
         if (idx === -1) { send(404, { ok: false, error: 'not_found' }); return }
         DOCS.splice(idx, 1)
-        send(200, { data: { id: parsed.id, success: true } })
+        // 与真实实例一致：成功标记在**顶层**（{success:true, ok:true}），不在 data 内层
+        send(200, { success: true, ok: true, data: { id: parsed.id } })
         return
       }
       send(404, { ok: false, error: 'not_found' })

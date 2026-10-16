@@ -46,6 +46,107 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+### Fixed — 写路径审计（数据完整性 / 闸门强度 / 结果诚实性）
+
+一次针对**写功能**的专项审计（含宿主 `dsh-tools` 0.2.0-rc.2 源码级契约核实与可执行探针复现），
+修掉 5 类问题。**审批闸本身的行为经实测正确**（决策矩阵：读工具 allow；白名单内 create/update/delete
+ask、白名单外与集合不可见 deny、空白名单全 deny），问题出在闸的**强度**与写路径的**护栏**上。
+
+#### 1. 读→改→写会静默截断长文档（最严重）
+
+- **现象**：`outline_get_document` 默认只返回前 20000 字符，而 `outline_update_document` 的 `text` 是
+  **整体替换**且零护栏。模型走常规「读全文 → 改一处 → 写回」时，会把正文截掉一半。
+  实测：原文 22757 字符 → 读回 20000 → 原样写回 → 服务端只剩 20000，**静默丢失 2757 字符**。
+- **修复**：
+  - 新增纯函数 `detectTruncatedRewrite()`：新正文是原文的**精确前缀**且丢失 ≥1000 字符，
+    或长度恰为默认上限 20000 且原文更长 → 判定为截断写回。审批文案直接写明
+    「原文 N 字符 → 写回 M 字符，将永久丢失 K 字符」并给出补救办法（`append: true` / 调大 `maxLength`）。
+    判定为 `ask` 而非 `deny`（有意裁剪长文是合法诉求），但必须由用户带数据确认。
+  - `outline_get_document` 的截断提示改为直接点明「不要把本结果交给 `outline_update_document` 写回」。
+  - `outline_update_document` 新增 **`append`** 参数，透传 Outline 原生追加语义 —— 长文改动的安全路径。
+
+#### 2. 未声明的写入参数被静默接受并静默丢弃
+
+- **现象**：宿主 `parameterSchemaSpecToJsonSchema` 生成的参数 schema 不带
+  `additionalProperties: false` —— 参数面**默认开放**（已用对照实验确认：`title: 123` 报
+  `invalid arguments`，而未知键 `append` / `bogus` 无任何报错）。而 `updateDocument` 是白名单拼 payload，
+  未知键被直接丢掉 → 模型传 `append: true` 以为在追加，实际拿到"成功"+整体覆盖。
+- **修复**：三个写工具（`create` / `update` / `delete`）入口调用 `assertKnownWriteArgs()` 自查并拒绝未知键，
+  报错里列出全部未知键与可用参数。纯函数、可单测。
+
+#### 3. 审批闸可被短路（闸门强度）
+
+- **现象**：闸挂在**可重排**的 `tools/pre-execute` waterfall 上。只要有任何一个先注册的监听器返回
+  `{kind:'allow'}` 而不调用 `next()`，本插件的闸就根本不会执行 —— 在白名单已配置时写操作**零审批通过**。
+- **修复**：注册宿主的**单调同步守卫** `ctx.tools.guard()` 作为地板。宿主只在决策为 `allow` 时查询守卫
+  （`guardReason`），且任何监听器都无法把守卫的拒绝翻盘。只有真正走完本插件闸决策的 exec 才被记入
+  `WeakSet`，未记入的写调用一律拒绝 —— 短路免疫；闸压根没装成（`gatePassed` 恒空）时同样是全拒的
+  fail-closed 行为。
+
+#### 4. `outline_delete` 的结果判定是 fail-open
+
+- **现象**：原实现 `json.success !== false`，顶层没有 `success` 字段就兜底成成功。
+  mock 实测响应形如 `{data:{success:true}}`（`success` 在内层）仍被判成功 ——
+  这正是旧冒烟里「删除成功」断言能过的原因，**该断言并未验证服务端语义**。对"不可恢复"的操作，
+  谎报成功比报失败危险得多。
+- **修复**：改为要求**明确**的成功标记（兼容顶层 `{success:true}` / `{ok:true}` / `{data:{success:true}}`）；
+  拿不到就抛错说明"删除请求已发出但无法确认"，让用户去 Outline 核对，绝不谎报已删除。
+  mock 的响应层级同步修正为与真实实例一致（顶层成功标记），并新增"无成功标记"反例。
+
+#### 5. 第二次删除确认未接入取消信号
+
+- **现象**：宿主自己的 `serviceAsk` 会给 `approval.request` 传 `signal: exec.signal` 做协作式取消竞速，
+  插件手写的第二次确认没传 → 用户在第二次弹窗期间取消本轮，该 promise 不会以 `cancelled` 收敛。
+- **修复**：`DeleteApprovalRequester` 与 `index.ts` 接线一并透传 `exec.signal`。
+
+#### 6. 复核追加：本地保存安全带可被 `..` 绕过、系统目录列表只覆盖 C 盘
+
+一次对上述修正的独立复核（读 diff + 逐字节核对 `lib/` 产物 + 回宿主源码二次核实契约）发现两处
+新引入的安全带缺口，一并修掉：
+
+- **`checkSaveDir()` 只做文本比对**：`D:/saves/../..` 字面不以盘根结尾，却能绕过检查 ——
+  随后的 `path.join` 由内核解析 `..`，实际落盘到盘根。现在先折叠 `.` / `..` / 重复斜杠，
+  再对**折叠结果**做根目录与系统目录判定。
+- **系统目录列表带 `c:` 盘符**：Windows 装在非 C 盘时（`D:\Windows`）整条列表失效。
+  列表改为盘符无关（`/windows`、`/program files` …），判定前剥掉盘符，任何盘都生效。
+
+复核同时确认了地板的**关键前提**成立：宿主 `dsh-tools` 0.2.0-rc.2 的 `prepareExecution` 中，
+`waterfall("tools/pre-execute", exec, …)` 与 `guardReason(exec)` 收到的是 `createExecution()` 构造的
+**同一个 exec 引用**（`tools-lib.js:3225` / `:3241`），因此 `WeakSet` 身份匹配有效；
+且 `guardReason` **仅在 `decision.kind === "allow"` 时被查询**，"ask 时先打标记"不会放宽任何路径。
+cordis `waterfall` 的 `next()` 语义（`(cbs.shift() ?? inner)(...args)`）也确认监听器返回而不调 `next()`
+即终止链 —— 本闸的决策不会被后置监听器覆盖，而先注册的 `allow` 短路确实会让本闸不执行（正是地板所兜的场景）。
+
+- 写工具 `execute` 兜底的集合归属读取改为 `getDocument(id, force=true)`，与审批闸同源，
+  不再用 60s 缓存判定可写性（读工具继续走缓存）。
+- 测试 204 → **210**（新增 `..` 折叠、非 C 盘系统目录、写工具 force 读取三组回归）。
+
+### Changed — 写路径的其他修正
+
+- **`published` 不再臆造**：实例未返回发布状态时，`OutlineCreateResult.published` 缺省（原实现盲填 `true`，
+  会把草稿报成已发布）；create/update 的输出 schema 与渲染文案同步区分"已发布 / 草稿 / 服务端未返回"。
+- **`outline_update_document` 支持 `publish`**：可显式发布或转为草稿（此前只能在创建时决定），
+  update 的参数校验相应放宽为「至少需要 title / text / publish 之一」。
+- **写入守卫的路径解析强制 fresh**：`getDocument(id, force)` / `resolveDocumentPath(id, force)` 新增 force，
+  `resolvePathGuard` 一律传 `true`。白名单是**按名称前缀**匹配的，原先用 60s 文档缓存会让
+  带外改名后的匹配结果滞后一个 TTL —— 等于拿可能过期的名字决定"这里可不可写"。读场景继续用缓存。
+- **本地保存加安全带**：`checkSaveDir()` 拒绝磁盘根（`C:\`）、文件系统根（`/`）、共享根
+  （`\\server\share`）与已知系统目录（`C:\Windows`、`C:\Program Files`、`/etc`、`/usr` 等）。
+  明确标注是防呆而非沙箱。
+- 文档：中英 README 补「写入与长文档」章节与「审批策略设为 never 时写操作全被拒绝（宿主 designed
+  fail-closed，非插件故障）」说明。
+
+### Added — 写路径测试覆盖（此前审批闸零测试）
+
+- **新增 `tests/gate.spec.ts`（14 条）**：按宿主真实策略链还原 ——
+  `waterfall("tools/pre-execute")` → ask 经批准变 allow → **仅 allow 时**查 `ctx.tools.guard()`
+  —— 覆盖决策矩阵、只读模式、`publish`/`append` 文案、截断护栏文案（含确切字符数），
+  以及**短路免疫**与**闸未安装时全拒**两个地板用例。
+- **`scripts/smoke.mjs` 修掉"闸从未注册"的假覆盖**：此前 ctx 写死 `on: () => () => {}`，冒烟只走
+  execute 层兜底。现在真实捕获并驱动 pre-execute 监听器与单调守卫，新增 9 项端到端断言
+  （闸决策、短路后地板拒绝、未知参数拒绝、`append` 追加不覆盖原文、delete 无成功标记不谎报成功）。
+- 单测 166 → **204**。
+
 ### Added — P0 竞争力升级：自动证据注入
 
 #### `outline_context_search` 工具（自动证据注入）

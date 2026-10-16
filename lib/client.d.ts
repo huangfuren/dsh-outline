@@ -39,12 +39,16 @@ export interface OutlineCollection {
     permission: string;
     documentCount?: number;
 }
-/** outline_create 返回：创建后的文档信息。 */
+/**
+ * 写入类工具（create / update）返回的文档信息。
+ * `published` 为可选：实例未在响应里返回发布状态时**不臆造**（旧实现盲填 `true`，
+ * 会把草稿报成已发布）。缺省时由工具的 render 明确说明"服务端未返回发布状态"。
+ */
 export interface OutlineCreateResult {
     id: string;
     url: string;
     title: string;
-    published: boolean;
+    published?: boolean;
 }
 /** Outline 用户（users.list 条目）。 */
 export interface OutlineUser {
@@ -127,20 +131,45 @@ export declare class OutlineClient {
         publish?: boolean;
         parentDocumentId?: string;
     }): Promise<OutlineCreateResult>;
-    /** 更新已有文档（至少提供 title 或 text 之一）。 */
+    /**
+     * 更新已有文档（至少提供 title / text / publish 之一）。
+     * - `append: true` → 用 Outline 原生的追加语义，把 text 接到正文末尾而非整体覆盖（长文改动的安全路径）。
+     * - `publish` → 显式切换发布状态（true 发布 / false 转草稿）；不传则该状态不变。
+     * 未声明的字段一律不透传：payload 是白名单构造的，不做 `...input` 透传，
+     * 避免调用方误传 Outline 参数（如 collectionId 移动）时出现"返回成功但语义被丢弃"。
+     */
     updateDocument(id: string, input: {
         title?: string;
         text?: string;
+        append?: boolean;
+        publish?: boolean;
     }): Promise<OutlineCreateResult>;
-    /** 删除文档（本实例无回收站端点，为硬删；调用方必须已通过双重审批）。 */
+    /**
+     * 删除文档（调用方必须已通过双重审批）。
+     *
+     * 结果判定刻意"宁严勿宽"：只有服务端**明确**给出成功标记才算成功。
+     * 原实现用 `json.success !== false`，在顶层没有 `success` 字段时（例如响应形如
+     * `{data:{success:true}}` 或任何缺字段的 200 响应）会兜底成 `true` —— 那是 fail-open：
+     * 删除没生效却向用户报"已删除"。对一个不可恢复的操作，谎报成功比报失败危险得多。
+     * 兼容三种已知响应形态：顶层 `{success:true}`（本实例）、`{data:{success:true}}`（mock/部分版本）、`{ok:true}`。
+     */
     deleteDocument(id: string): Promise<{
         success: boolean;
     }>;
-    getDocument(id: string): Promise<OutlineDocument>;
+    /**
+     * 取文档信息。
+     * @param force 跳过 60s 缓存（仍会把新值写回缓存）。写入守卫解析路径时传 true ——
+     *   白名单是**按名称前缀**匹配的，而集合/目录在带外被改名后，缓存最多会让匹配结果滞后 60s，
+     *   等于用一个可能过期的名字去决定"这个位置可不可写"。读场景继续用缓存。
+     */
+    getDocument(id: string, force?: boolean): Promise<OutlineDocument>;
     /** 列出某父文档下的直接子文档（用于路径定位；本地匹配名称，避免搜索分词歧义）。 */
     listChildDocuments(parentDocumentId: string, pageSize?: number): Promise<OutlineSearchHit[]>;
-    /** 解析一个文档的完整路径：返回 [集合名, 顶级目录, …, 文档名]（自顶向下）。 */
-    resolveDocumentPath(docId: string): Promise<string[]>;
+    /**
+     * 解析一个文档的完整路径：返回 [集合名, 顶级目录, …, 文档名]（自顶向下）。
+     * @param force 跳过文档缓存（写入守卫用 true，避免用 60s 前的旧名字做白名单匹配）。
+     */
+    resolveDocumentPath(docId: string, force?: boolean): Promise<string[]>;
     /**
      * 拉取一篇文档的摘要原文（前 N 字符的纯文本正文）。
      * 复用 getDocument 的 60s 缓存，避免 context_search 重复打 API。

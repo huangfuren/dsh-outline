@@ -291,6 +291,91 @@ describe('OutlineClient', () => {
     expect(doc).toMatchObject({ id: 'd1', title: '新标题', url: 'https://outline.example.com/doc/d1' })
   })
 
+  it('updateDocument 透传 append（Outline 原生追加语义，避免整体覆盖）', async () => {
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (_url, init) => {
+        expect(JSON.parse(String(init.body))).toEqual({ id: 'd1', text: '追加段', append: true })
+        return { status: 200, body: { data: { id: 'd1', title: 'T', url: '/doc/d1', published: true } } }
+      }),
+    })
+    await client.updateDocument('d1', { text: '追加段', append: true })
+  })
+
+  it('updateDocument 透传 publish（发布/转草稿）', async () => {
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (_url, init) => {
+        expect(JSON.parse(String(init.body))).toEqual({ id: 'd1', publish: false })
+        return { status: 200, body: { data: { id: 'd1', title: 'T', url: '/doc/d1', published: false } } }
+      }),
+    })
+    const doc = await client.updateDocument('d1', { publish: false })
+    expect(doc.published).toBe(false)
+  })
+
+  it('updateDocument 无任何有效变更 → 抛错且不发请求（不做"空更新"）', async () => {
+    let called = false
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async () => { called = true; return { status: 200, body: { data: {} } } }),
+    })
+    await expect(client.updateDocument('d1', {})).rejects.toThrow('至少需要')
+    expect(called).toBe(false)
+  })
+
+  it('实例未返回 published 时不臆造（create/update 均缺省而非 true）', async () => {
+    const noshape = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async () => ({ status: 200, body: { data: { id: 'd1', title: 'T', url: '/doc/d1' } } })),
+    })
+    expect((await noshape.createDocument({ collectionId: 'c1', title: 'T', text: 'x' })).published).toBeUndefined()
+    expect((await noshape.updateDocument('d1', { title: 'T2' })).published).toBeUndefined()
+  })
+
+  it('getDocument(force) 跳过 60s 缓存，并把新值写回缓存', async () => {
+    let info = 0
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async () => {
+        info += 1
+        return { status: 200, body: { data: { id: 'd1', title: `第${info}次`, url: '/doc/d1', text: 'x', updatedAt: '' } } }
+      }),
+    })
+    expect((await client.getDocument('d1')).title).toBe('第1次')
+    expect((await client.getDocument('d1')).title).toBe('第1次') // 命中缓存
+    expect(info).toBe(1)
+    expect((await client.getDocument('d1', true)).title).toBe('第2次') // 强制刷新
+    expect(info).toBe(2)
+    expect((await client.getDocument('d1')).title).toBe('第2次') // 新值已写回缓存
+    expect(info).toBe(2)
+  })
+
+  it('resolveDocumentPath(force) 逐级取最新名字（写入守卫不用旧名做白名单匹配）', async () => {
+    let info = 0
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (url) => {
+        if (String(url).includes('/api/collections.list')) {
+          return { status: 200, body: { data: [{ id: 'col-1', name: '集合A', permission: 'read_write' }], pagination: { total: 1 } } }
+        }
+        info += 1
+        return { status: 200, body: { data: { id: 'd1', title: `目录第${info}次`, url: '/doc/d1', text: 'x', updatedAt: '', collectionId: 'col-1' } } }
+      }),
+    })
+    expect(await client.resolveDocumentPath('d1')).toEqual(['集合A', '目录第1次'])
+    expect(await client.resolveDocumentPath('d1')).toEqual(['集合A', '目录第1次'])
+    expect(info).toBe(1)
+    expect(await client.resolveDocumentPath('d1', true)).toEqual(['集合A', '目录第2次'])
+    expect(info).toBe(2)
+  })
+
   it('deleteDocument 调用删除端点', async () => {
     const client = new OutlineClient({
       baseUrl: 'https://outline.example.com',

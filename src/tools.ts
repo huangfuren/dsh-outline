@@ -94,7 +94,14 @@ function renderSearchResults(result: OutlineSearchResult, allMode = false): stri
 }
 
 function renderDocument(doc: OutlineDocument, truncated: boolean): string {
-  const note = truncated ? '\n\n…（内容过长已截断，可增大 maxLength 参数）' : ''
+  // 截断提示必须直接点明"不要写回"：text 是整体替换，把截断结果原样交给
+  // outline_update_document 会永久丢掉被截掉的部分（读→改→写链路的静默丢内容路径）。
+  const note = truncated
+    ? `\n\n…（内容已截断：本次只返回前 ${doc.text.length} 字符，全文更长。`
+      + '\n⚠️ 不要把本结果直接交给 outline_update_document 写回 —— 它的 text 是**整体替换**，写回会永久丢掉未返回的部分。'
+      + '\n如需改全文：先用更大的 maxLength（上限 200000）重新调用 outline_get_document；'
+      + '\n如只需追加内容：用 outline_update_document 并传 append: true。）'
+    : ''
   return `# ${doc.title}\n\n${doc.url}\n\n${doc.text}${note}`
 }
 
@@ -112,6 +119,78 @@ export function resolveLocalSaveDir(configured: string | undefined, env: NodeJS.
   const dshHome = (env.DSH_HOME ?? '').trim()
   const base = dshHome !== '' ? dshHome : (env.USERPROFILE ?? env.HOME ?? '.').trim() || '.'
   return path.join(base, LOCAL_SAVE_DIRNAME)
+}
+
+/**
+ * 本地保存的安全兜底：这些目录（及其子目录）一律不写，避免把知识库导出物丢进系统目录。
+ * 刻意**不带盘符**：判定时先剥掉 `C:` / `D:` 再比对，因此 Windows 装在非 C 盘时同样生效
+ * （带盘符的列表在 `D:\Windows` 这类布局下会整体失效）。
+ */
+export const UNSAFE_SAVE_DIR_ROOTS: readonly string[] = [
+  '/windows',
+  '/program files',
+  '/program files (x86)',
+  '/programdata',
+  '/etc',
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/boot',
+  '/dev',
+  '/proc',
+  '/sys',
+  '/system',
+  '/library',
+]
+
+/**
+ * 折叠路径中的 `.` / `..` / 重复斜杠，返回规范形态（保留盘符与 UNC 前缀）。
+ * 目的：判定必须在**折叠之后**进行。纯文本比对会被 `D:/saves/../..` 绕过 ——
+ * 字面不以盘根结尾，但随后的 `path.join` 由内核解析 `..`，实际落盘到盘根。
+ */
+function collapsePathSegments(input: string): string {
+  const unc = input.startsWith('//')
+  const drive = unc ? '' : (/^[a-zA-Z]:/.exec(input)?.[0] ?? '')
+  const body = input.slice(unc ? 2 : drive.length).replace(/^\/+/, '')
+  const out: string[] = []
+  for (const segment of body.split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') { out.pop(); continue }
+    out.push(segment)
+  }
+  const prefix = unc ? '//' : drive !== '' ? `${drive}/` : '/'
+  return prefix + out.join('/')
+}
+
+/**
+ * `outline_save_local` 的落盘目录校验。**这是安全带，不是沙箱** —— 目录本身由用户配置，
+ * 只有目录不可信时才有意义；真正的边界仍是"文件系统权限"。
+ * 拒绝三类目标：① 磁盘/文件系统/共享根目录（写入范围会失控）；② 已知系统目录（盘符无关）。
+ * 判定对象是**折叠 `..` 之后的规范路径**，因此带 `..` 的写法绕不过去。
+ * @returns 拒绝理由；可写时返回 null。
+ */
+export function checkSaveDir(dir: string): string | null {
+  const trimmed = (dir ?? '').trim()
+  if (trimmed === '') return null
+  const collapsed = collapsePathSegments(trimmed.replace(/\\+/g, '/'))
+  const bare = collapsed.replace(/\/+$/, '')
+  if (/^[a-z]:$/i.test(bare)) {
+    return `拒绝写入磁盘根目录：${dir}。请在 设置 → 插件 → 插件配置 中指定一个子目录（如 D:/outline-saves）。`
+  }
+  if (bare === '') {
+    return `拒绝写入文件系统根目录：${dir}。请指定一个子目录。`
+  }
+  if (/^\/\/[^/]+\/?[^/]*$/.test(bare)) {
+    return `拒绝写入网络共享根目录：${dir}。请指定共享下的子目录。`
+  }
+  // 系统目录：剥掉盘符后比对，使非 C 盘的系统目录同样被挡
+  const lower = bare.toLowerCase().replace(/^[a-z]:/, '')
+  for (const root of UNSAFE_SAVE_DIR_ROOTS) {
+    if (lower === root || lower.startsWith(root + '/')) {
+      return `拒绝写入系统目录：${dir}。请改为用户目录下的子目录（如 D:/outline-saves）。`
+    }
+  }
+  return null
 }
 
 /**
@@ -272,6 +351,9 @@ export function outlineSaveLocalTool(
       if (dir === '') {
         throw new Error('本地保存目录未配置。请在 设置 → 插件 → 插件配置 的「Outline 知识库」卡片中填写本地保存目录。')
       }
+      // 落盘前的安全带：拒绝磁盘根/系统目录（目录由用户配置，这里只挡"明显不该写"的目标）
+      const unsafeDir = checkSaveDir(dir)
+      if (unsafeDir !== null) throw new Error(unsafeDir)
       const ids = [...new Set((args.ids ?? '').split(',').map((s) => s.trim()).filter((s) => s !== ''))]
       if (ids.length === 0) {
         throw new Error('请提供至少一个文档 id（参数 ids，逗号分隔，来自 outline_search 结果）。')
@@ -705,10 +787,10 @@ export async function resolvePathGuard(
         return `无法确认写入目标集合（${target.collectionId}）：集合不存在或当前 token 无权查看。为避免误写，本次操作已拒绝。`
       }
       targetPath = target.parentDocumentId !== undefined && target.parentDocumentId !== ''
-        ? await client.resolveDocumentPath(target.parentDocumentId)
+        ? await client.resolveDocumentPath(target.parentDocumentId, true)
         : [coll.name]
     } else {
-      targetPath = await client.resolveDocumentPath(target.docId)
+      targetPath = await client.resolveDocumentPath(target.docId, true)
     }
   } catch {
     return '无法解析写入目标路径：目标集合或文档不可见。为避免误写，本次操作已拒绝。'
@@ -938,6 +1020,68 @@ export function outlineListCollectionsTool(makeClient: () => OutlineClient) {
   })
 }
 
+/**
+ * 写工具的已声明参数白名单。
+ *
+ * 为什么必须自查：宿主 `parameterSchemaSpecToJsonSchema`（dsh-tools 0.2.0-rc.2）生成的参数
+ * schema 是 `{type,properties,required}`，**不带 `additionalProperties: false`** ——
+ * 参数面默认开放，未声明的键能通过校验、不会报错。而各工具的 `execute` 只读取自己认识的字段，
+ * 于是「模型传 `append: true` 以为在追加 → 实际走整体覆盖并返回成功」这类
+ * **静默成功但语义被丢弃**的情况就会发生；对写操作而言这是数据损坏路径。
+ * 因此写工具在 `execute` 入口显式拒绝未知键（fail-closed），而不是静默忽略。
+ */
+export const CREATE_ARG_KEYS = ['collectionId', 'parentDocumentId', 'title', 'text', 'publish'] as const
+export const UPDATE_ARG_KEYS = ['id', 'title', 'text', 'append', 'publish'] as const
+export const DELETE_ARG_KEYS = ['id'] as const
+
+/** 前缀式截断告警的触发门槛：按前缀判定时，至少要"少这么多字符"才值得打扰用户。 */
+export const TRUNCATION_PREFIX_MIN_LOST = 1000
+
+/**
+ * 识别「把读取时被截断的正文写回」这一破坏性模式（读→改→写链路的静默丢内容路径）。
+ *
+ * 判据（任一命中即告警）：
+ * ① 新正文长度恰为 `outline_get_document` 的默认上限 20000，且原文更长 —— 典型的默认参数截断痕迹；
+ * ② 新正文是原文的**精确前缀**且少掉 `TRUNCATION_PREFIX_MIN_LOST`（1000）字符以上 ——
+ *    截断读出的内容按定义就是原文前缀，且丢失量足够大。
+ *
+ * 纯函数，可单测。返回告警文案（含确切字符数）供审批 reason 使用；不疑似截断时返回 null。
+ * 注意：判定为 `ask` 而非 `deny` —— 故意把长文裁剪到前 N 字符是合法诉求，交由用户带数据确认。
+ */
+export function detectTruncatedRewrite(originalText: string, nextText: string): string | null {
+  if (nextText === '' || nextText.length >= originalText.length) return null
+  const lost = originalText.length - nextText.length
+  const atDefaultCap = nextText.length === DOCUMENT_DEFAULT_MAX_LENGTH
+  const isLongPrefix = originalText.startsWith(nextText) && lost >= TRUNCATION_PREFIX_MIN_LOST
+  if (!atDefaultCap && !isLongPrefix) return null
+  const why = atDefaultCap
+    ? `新正文长度恰为 outline_get_document 的默认上限 ${DOCUMENT_DEFAULT_MAX_LENGTH}`
+    : '新正文是原文的精确前缀'
+  return `⚠️ 疑似把读取时被截断的正文写回（${why}）：原文 ${originalText.length} 字符 → 写回 ${nextText.length} 字符，将永久丢失 ${lost} 字符。`
+    + '\n若本意是追加内容，请改用 append: true（追加不会覆盖原文）；'
+    + '\n若本意是整体重写，请重新调用 outline_get_document 并把 maxLength 调大（上限 200000）后再修改。'
+}
+
+/**
+ * 拒绝未声明的写入参数。纯函数（直接抛错），可单测。
+ * @param toolName 工具名（用于错误文案）
+ * @param args 模型传入的原始参数
+ * @param allowed 已声明参数键
+ */
+export function assertKnownWriteArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  const unknown = Object.keys(args ?? {}).filter((key) => !allowed.includes(key))
+  if (unknown.length === 0) return
+  throw new Error(
+    `${toolName} 不接受参数：${unknown.map((key) => `"${key}"`).join('、')}。`
+    + `可用参数：${allowed.join('、')}。`
+    + '（为避免"返回成功但变更未生效"，本工具不静默忽略未知写入参数。）',
+  )
+}
+
 export function outlineCreateTool(makeClient: () => OutlineClient, getWritablePaths: () => string) {
   return defineTool({
     name: 'outline_create',
@@ -957,17 +1101,20 @@ export function outlineCreateTool(makeClient: () => OutlineClient, getWritablePa
           id: { type: 'string', required: true },
           url: { type: 'string', required: true },
           title: { type: 'string', required: true },
-          published: { type: 'boolean', required: true },
+          published: { type: 'boolean', description: '是否已发布（实例未返回该字段时缺省，不再默认当作已发布）' },
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: value.published
-          ? `✅ 已创建并发布文档：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`
-          : `📝 已创建草稿（未发布）：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`,
+        text: value.published === false
+          ? `📝 已创建草稿（未发布）：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`
+          : value.published === true
+            ? `✅ 已创建并发布文档：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`
+            : `✅ 已创建文档（服务端未返回发布状态）：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`,
       }],
     },
     async execute(args) {
+      assertKnownWriteArgs('outline_create', args as Record<string, unknown>, CREATE_ARG_KEYS)
       const client = makeClient()
       const collections = await client.listCollections()
       // 写入守卫（防御纵深，即使绕过审批直调也会被拦）：目录白名单 → 集合存在与权限
@@ -994,11 +1141,13 @@ export function outlineCreateTool(makeClient: () => OutlineClient, getWritablePa
 export function outlineUpdateDocumentTool(makeClient: () => OutlineClient, getWritablePaths: () => string) {
   return defineTool({
     name: 'outline_update_document',
-    description: '更新已有 Outline 文档的标题/正文（写操作，执行前需用户审批，审批展示文档完整路径）。',
+    description: '更新已有 Outline 文档的标题/正文/发布状态（写操作，执行前需用户审批，审批展示文档完整路径）。注意：text 是**整体替换**正文，必须传完整内容；只想追加内容请传 append: true（不覆盖原文），否则会覆盖掉未包含的原文。',
     parameters: {
       id: { type: 'string', required: true, description: '文档 id（来自 outline_search / outline_get_document）' },
       title: { type: 'string', description: '可选，新标题' },
-      text: { type: 'string', description: '可选，新 Markdown 正文' },
+      text: { type: 'string', description: '可选，新 Markdown 正文；**整体替换**原文，必须传完整内容（要追加请用 append: true）' },
+      append: { type: 'boolean', description: '可选，true = 把 text 追加到正文末尾（Outline 原生 append 语义），不覆盖原文；默认 false = 整体替换' },
+      publish: { type: 'boolean', description: '可选，发布状态：true = 发布，false = 转为草稿；不传则该状态不变' },
     },
     output: {
       schema: {
@@ -1008,30 +1157,47 @@ export function outlineUpdateDocumentTool(makeClient: () => OutlineClient, getWr
           id: { type: 'string', required: true },
           url: { type: 'string', required: true },
           title: { type: 'string', required: true },
-          published: { type: 'boolean', required: true },
+          published: { type: 'boolean', description: '是否已发布（实例未返回该字段时缺省，不再默认当作已发布）' },
         },
       },
-      render: (_args, value) => [{ type: 'text', text: `✏️ 已更新文档：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}` }],
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.published === false
+          ? `✏️ 已更新文档（当前为草稿）：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`
+          : `✏️ 已更新文档：${escapeLinkText(value.title)} → ${wrapUrl(value.url)}`,
+      }],
     },
     async execute(args) {
+      assertKnownWriteArgs('outline_update_document', args as Record<string, unknown>, UPDATE_ARG_KEYS)
       // 参数校验：pre-execute 钩子会拦截；此处做 fail-closed 兜底（防止绕过审批直调时静默成功）
-      if ((args.title === undefined || args.title === '') && (args.text === undefined || args.text === '')) {
-        throw new Error('outline_update_document 至少需要 title 或 text 之一')
+      if ((args.title === undefined || args.title === '')
+        && (args.text === undefined || args.text === '')
+        && args.publish === undefined) {
+        throw new Error('outline_update_document 至少需要 title / text / publish 之一')
       }
       const client = makeClient()
-      const doc = await client.getDocument(args.id)
+      // force=true：与审批闸同源 —— 写决策不能建立在 60s 前的读上（集合归属会被带外移动/改名影响）
+      const doc = await client.getDocument(args.id, true)
       const collections = await client.listCollections()
       const pathGuard = await resolvePathGuard(client, { kind: 'doc', docId: args.id }, parseWritablePaths(getWritablePaths()), collections)
       if (pathGuard !== null) throw new Error(pathGuard)
       const guard = resolveWriteGuard(collections, doc.collectionId ?? '')
       if (guard !== null) throw new Error(guard)
-      return client.updateDocument(args.id, { title: args.title, text: args.text })
+      return client.updateDocument(args.id, { title: args.title, text: args.text, append: args.append, publish: args.publish })
     },
   })
 }
 
-/** 二次审批回调：由 index.ts 接线到 ctx.approval.request，返回是否 allowed-once。 */
-export type DeleteApprovalRequester = (reason: string, exec: { agent?: unknown; callId?: unknown }) => Promise<boolean>
+/**
+ * 二次审批回调：由 index.ts 接线到 ctx.approval.request，返回是否 allowed-once。
+ * `exec.signal` 必须一并透传 —— 宿主的 approval.request 用它做协作式取消竞速
+ * （`decide()` 在 signal 已中止时直接返回 cancelled；宿主自己的 serviceAsk 也是这么传的）。
+ * 不透传的话，用户在第二次弹窗期间取消本轮，这个 promise 不会以 cancelled 收敛。
+ */
+export type DeleteApprovalRequester = (
+  reason: string,
+  exec: { agent?: unknown; callId?: unknown; signal?: unknown },
+) => Promise<boolean>
 
 export function outlineDeleteTool(
   makeClient: () => OutlineClient,
@@ -1056,8 +1222,10 @@ export function outlineDeleteTool(
       render: (_args, value) => [{ type: 'text', text: `🗑 已删除文档（${value.id}）` }],
     },
     async execute(args, exec) {
+      assertKnownWriteArgs('outline_delete', args as Record<string, unknown>, DELETE_ARG_KEYS)
       const client = makeClient()
-      const doc = await client.getDocument(args.id)
+      // force=true：与审批闸同源 —— 写决策不能建立在 60s 前的读上（集合归属会被带外移动/改名影响）
+      const doc = await client.getDocument(args.id, true)
       const collections = await client.listCollections()
       const pathGuard = await resolvePathGuard(client, { kind: 'doc', docId: args.id }, parseWritablePaths(getWritablePaths()), collections)
       if (pathGuard !== null) throw new Error(pathGuard)

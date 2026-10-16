@@ -41,21 +41,27 @@ Writes are gated by a `tools/pre-execute` hook that requests native DSH approval
 - approval service unavailable → the write is denied, not performed;
 - an exception inside the gate itself → the write is denied and reported;
 - the tool is invoked without going through the hook → tool-level argument validation refuses it;
-- `outline_delete` (irreversible) requires a **second** confirmation after the first approval.
+- `outline_delete` (irreversible) requires a **second** confirmation after the first approval, and only reports success when the server returns an explicit success flag — an unconfirmable result is reported as an error rather than as "deleted".
+
+Because `tools/pre-execute` is a **reorderable waterfall**, a gate installed there alone is only as strong as the registration order: any listener registered earlier that returns `allow` without calling `next()` short-circuits it. The plugin therefore also registers the host's **monotonic** `ctx.tools.guard()` as a floor. The host consults guards only after a decision of `allow`, and no listener can overturn a guard's denial. Only executions that actually completed this plugin's gate are recorded (a `WeakSet` keyed by the execution object); any other write call — short-circuited, or with the gate never installed at all — is refused.
 
 Restricting UI paths is not sufficient: the checks live in the host half, so a direct tool call cannot skip them.
+
+**Approval policy `never`.** When the session's approval policy is set to "never", the host denies every approval request, so all writes are refused. That is designed fail-closed behaviour, not a plugin failure; the plugin logs it and the refusal message says so.
 
 ### Directory allow-list (fail closed)
 
 - Writes are limited to `writablePaths` configured per deployment. An empty list means read-only: every write tool refuses before any approval prompt appears.
 - A target path must resolve inside an allow-listed directory. Unresolvable paths (missing collection, invisible or moved document) are refused.
 - Since v0.3.0 the model is an allow-list; the old `protectedCollections` deny-list was removed.
+- Path resolution for the guard bypasses the 60s document cache. The allow-list matches on **names**, so a cached ancestor name could otherwise decide writability using a value up to one TTL out of date after an out-of-band rename.
 
 ### Local file writes
 
-`outline_save_local` writes Markdown to the local disk only and never touches the knowledge base. Protections:
+`outline_save_local` writes Markdown to the local disk only and never touches the knowledge base. The target directory is **trusted configuration** — it is supplied by the user in the settings card, so this is a seatbelt rather than a sandbox, and the real boundary remains filesystem permissions. Protections:
 
 - target directories are resolved from the configured local save directory; traversal outside it is refused;
+- disk roots (`C:\`), filesystem roots (`/`), share roots (`\\server\share`) and known system directories (`C:\Windows`, `C:\Program Files`, `C:\ProgramData`, `/etc`, `/usr`, `/bin`, `/sbin`, `/boot`, `/dev`, `/proc`, `/sys`, `/System`, `/Library`) are refused. The check runs **after** collapsing `.` / `..` segments, so a directory configured as `D:/saves/../..` cannot slip past it; the system-directory list is matched with the drive letter stripped, so it also applies when Windows is installed on a non-`C:` volume;
 - path traversal sequences and characters illegal per platform are stripped or rejected;
 - Windows reserved device names (`CON`, `NUL`, `COM1-9`, `LPT1-9`) are rewritten so they cannot silently fail or hijack a device;
 - leading/trailing dots and spaces are normalized (Windows would otherwise silently trim `file.md.` to `file.md`);

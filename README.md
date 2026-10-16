@@ -120,10 +120,16 @@ The public package must not contain organization-specific collection names, URLs
 | `outline_doc_template()` | Return the standard requirement-document template (Markdown) + required section list — call it before writing a requirement doc. |
 | `outline_save_local(ids, title?)` | **Local save** — write one or many fetched Outline documents to a local Markdown file. `ids` is a comma-separated list from search results (up to 50); multiple docs merge into one file with a table of contents. Filename `YYYY-MM-DD-title.md` (single doc → its title, many → `首篇标题等N篇`); auto-increments on name clash, never overwrites. **Writes only to local disk; never touches the knowledge base.** Search/get_document results end with a prompt offering this. |
 | `outline_create(collectionId, title, text, publish?, parentDocumentId?)` | **Write** — create a document (default published; nest under a directory via `parentDocumentId`). **Requires approval** showing the resolved full path. |
-| `outline_update_document(id, title?, text?)` | **Write** — update a document's title/body. **Requires approval** showing the document path. |
-| `outline_delete(id)` | **Write, irreversible** — delete a document. **Double approval**: a first prompt, then a second confirmation before deletion. |
+| `outline_update_document(id, title?, text?, append?, publish?)` | **Write** — update a document's title/body/publish state. **Requires approval** showing the document path. `text` **replaces** the whole body; pass `append: true` to append instead of overwriting. |
+| `outline_delete(id)` | **Write, irreversible** — delete a document. **Double approval**: a first prompt, then a second confirmation before deletion. Reported successful only when the server returns an explicit success flag. |
 
 > Writes are restricted to the **writable paths** configured per deployment (read-only when empty). The public package ships with no organization-specific default.
+>
+> **Long documents.** `outline_get_document` returns at most 20000 characters by default, while `outline_update_document` replaces the whole body. If you write back a truncated read (the new text is an exact prefix of the original, or exactly the default cap), the approval prompt states the exact numbers — "original N chars → writing M chars, K chars will be permanently lost" — and how to fix it. Use `append: true` when you only mean to add content.
+>
+> **Unknown write arguments are rejected.** The host does not force tool parameter schemas closed (undeclared keys pass silently), so each write tool validates its own argument keys — no "parameter accepted, success returned, change never applied".
+>
+> **`publish`** is accepted by both `outline_create` and `outline_update_document`. When the instance does not echo a publish state, the tools say so rather than reporting a draft as published.
 
 ### Workflow: writing a requirement document (common task)
 
@@ -131,7 +137,9 @@ See the full SOP: [`docs/workflow-requirement-doc.zh.md`](docs/workflow-requirem
 
 ## Security
 
-Every write goes through native DSH approval and a per-deployment directory allow-list, and both fail closed: an unavailable approval service, an error inside the gate, or an unresolvable target path all refuse the write instead of performing it. Public instances must use HTTPS (loopback and private intranet hosts are exempt), API tokens stay in the DSH settings layer and never reach tool output, logs, or the browser half, and `outline_delete` asks for a second confirmation because it is irreversible. Local Markdown saves are confined to the configured save directory, with per-platform filename and path-length hardening.
+Every write goes through native DSH approval and a per-deployment directory allow-list, and both fail closed: an unavailable approval service, an error inside the gate, or an unresolvable target path all refuse the write instead of performing it. On top of that the plugin registers the host's **monotonic guard** (`ctx.tools.guard`) as a floor: unlike the reorderable `tools/pre-execute` waterfall it cannot be overridden by any listener, so writes are still refused even if the gate is short-circuited by another plugin or never installed at all. Public instances must use HTTPS (loopback and private intranet hosts are exempt), API tokens stay in the DSH settings layer and never reach tool output, logs, or the browser half, and `outline_delete` asks for a second confirmation (the second prompt is raced against the caller's signal, so cancelling the turn aborts it) and only reports success when the server explicitly says so — an unconfirmable result is reported as an error, never as "deleted". Local Markdown saves are confined to the configured save directory and refuse disk roots, filesystem roots, share roots and known system directories; that is a seatbelt, not a sandbox. The check runs after collapsing `.`/`..` segments and matches system directories with the drive letter stripped, so a `..`-laden path and a non-`C:` Windows install are both covered. Save paths keep their per-platform filename and path-length hardening.
+
+> **With the approval policy set to "never", every write is refused.** That is DSH's designed fail-closed behaviour (no approver available means deny), not a plugin fault. Switch the policy back to "ask" to allow writes.
 
 See [SECURITY.md](./SECURITY.md) for the full threat model and for how to report a vulnerability privately.
 

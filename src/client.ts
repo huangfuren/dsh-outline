@@ -66,12 +66,16 @@ export interface OutlineCollection {
   documentCount?: number
 }
 
-/** outline_create 返回：创建后的文档信息。 */
+/**
+ * 写入类工具（create / update）返回的文档信息。
+ * `published` 为可选：实例未在响应里返回发布状态时**不臆造**（旧实现盲填 `true`，
+ * 会把草稿报成已发布）。缺省时由工具的 render 明确说明"服务端未返回发布状态"。
+ */
 export interface OutlineCreateResult {
   id: string
   url: string
   title: string
-  published: boolean
+  published?: boolean
 }
 
 /** Outline 用户（users.list 条目）。 */
@@ -416,15 +420,27 @@ export class OutlineClient {
       id: typeof data.id === 'string' ? data.id : '',
       url: this.absolutize(typeof data.url === 'string' ? data.url : ''),
       title: OutlineClient.stripHtml(typeof data.title === 'string' ? data.title : input.title),
-      published: typeof data.published === 'boolean' ? data.published : true,
+      // 不臆造发布状态：实例没返回就留空，由渲染层如实说明
+      ...(typeof data.published === 'boolean' ? { published: data.published } : {}),
     }
   }
 
-  /** 更新已有文档（至少提供 title 或 text 之一）。 */
-  async updateDocument(id: string, input: { title?: string; text?: string }): Promise<OutlineCreateResult> {
+  /**
+   * 更新已有文档（至少提供 title / text / publish 之一）。
+   * - `append: true` → 用 Outline 原生的追加语义，把 text 接到正文末尾而非整体覆盖（长文改动的安全路径）。
+   * - `publish` → 显式切换发布状态（true 发布 / false 转草稿）；不传则该状态不变。
+   * 未声明的字段一律不透传：payload 是白名单构造的，不做 `...input` 透传，
+   * 避免调用方误传 Outline 参数（如 collectionId 移动）时出现"返回成功但语义被丢弃"。
+   */
+  async updateDocument(id: string, input: { title?: string; text?: string; append?: boolean; publish?: boolean }): Promise<OutlineCreateResult> {
     const payload: Record<string, unknown> = { id }
     if (input.title !== undefined && input.title !== '') payload.title = input.title
     if (input.text !== undefined && input.text !== '') payload.text = input.text
+    if (input.append === true) payload.append = true
+    if (input.publish !== undefined) payload.publish = input.publish
+    if (Object.keys(payload).length === 1) {
+      throw new Error('outline_update_document 至少需要 title / text / publish 之一（否则不会有任何变更）。')
+    }
     const data = await this.request<Record<string, unknown>>(`/api/documents.update`, payload)
     // 更新后清文档缓存与集合/搜索缓存，避免 60s 内读到旧内容
     this.docCache.delete(id)
@@ -433,23 +449,46 @@ export class OutlineClient {
       id: typeof data.id === 'string' ? data.id : id,
       url: this.absolutize(typeof data.url === 'string' ? data.url : ''),
       title: OutlineClient.stripHtml(typeof data.title === 'string' ? data.title : input.title ?? id),
-      published: typeof data.published === 'boolean' ? data.published : true,
+      // 同上：不把草稿谎报成已发布
+      ...(typeof data.published === 'boolean' ? { published: data.published } : {}),
     }
   }
 
-  /** 删除文档（本实例无回收站端点，为硬删；调用方必须已通过双重审批）。 */
+  /**
+   * 删除文档（调用方必须已通过双重审批）。
+   *
+   * 结果判定刻意"宁严勿宽"：只有服务端**明确**给出成功标记才算成功。
+   * 原实现用 `json.success !== false`，在顶层没有 `success` 字段时（例如响应形如
+   * `{data:{success:true}}` 或任何缺字段的 200 响应）会兜底成 `true` —— 那是 fail-open：
+   * 删除没生效却向用户报"已删除"。对一个不可恢复的操作，谎报成功比报失败危险得多。
+   * 兼容三种已知响应形态：顶层 `{success:true}`（本实例）、`{data:{success:true}}`（mock/部分版本）、`{ok:true}`。
+   */
   async deleteDocument(id: string): Promise<{ success: boolean }> {
-    // 本实例 delete 响应形如 {success:true, ok:true}，无 data 字段 → 用 requestJson 直接读
     const json = await this.requestJson(`/api/documents.delete`, { id })
+    const nested = json.data !== null && typeof json.data === 'object' ? json.data as Record<string, unknown> : undefined
+    const confirmed = json.success === true || json.ok === true || nested?.success === true
+    if (!confirmed) {
+      throw new OutlineApiError(
+        'invalid-response',
+        `删除请求已发出，但服务端未返回明确的成功标记，无法确认文档是否已被删除（文档 id：${id}）。`
+        + '请到 Outline 中确认该文档当前状态后再决定是否重试。',
+      )
+    }
     // 删除后清文档缓存与集合/搜索缓存（文档数/可见性变化）
     this.docCache.delete(id)
     this.invalidateCaches()
-    return { success: json.success !== false }
+    return { success: true }
   }
 
-  async getDocument(id: string): Promise<OutlineDocument> {
+  /**
+   * 取文档信息。
+   * @param force 跳过 60s 缓存（仍会把新值写回缓存）。写入守卫解析路径时传 true ——
+   *   白名单是**按名称前缀**匹配的，而集合/目录在带外被改名后，缓存最多会让匹配结果滞后 60s，
+   *   等于用一个可能过期的名字去决定"这个位置可不可写"。读场景继续用缓存。
+   */
+  async getDocument(id: string, force = false): Promise<OutlineDocument> {
     const cached = this.docCache.get(id)
-    if (cached !== undefined && cached.expires > Date.now()) return cached.doc
+    if (!force && cached !== undefined && cached.expires > Date.now()) return cached.doc
     const data = await this.request<Record<string, unknown>>(`/api/documents.info`, { id })
     const doc: OutlineDocument = {
       id: typeof data.id === 'string' ? data.id : id,
@@ -501,15 +540,18 @@ export class OutlineClient {
     }))
   }
 
-  /** 解析一个文档的完整路径：返回 [集合名, 顶级目录, …, 文档名]（自顶向下）。 */
-  async resolveDocumentPath(docId: string): Promise<string[]> {
+  /**
+   * 解析一个文档的完整路径：返回 [集合名, 顶级目录, …, 文档名]（自顶向下）。
+   * @param force 跳过文档缓存（写入守卫用 true，避免用 60s 前的旧名字做白名单匹配）。
+   */
+  async resolveDocumentPath(docId: string, force = false): Promise<string[]> {
     const titles: string[] = []
     let collectionId: string | undefined
     let currentId = docId
     const seen = new Set<string>()
     while (currentId !== undefined && currentId !== '' && !seen.has(currentId)) {
       seen.add(currentId)
-      const doc = await this.getDocument(currentId)
+      const doc = await this.getDocument(currentId, force)
       collectionId ??= doc.collectionId
       titles.unshift(doc.title)
       currentId = doc.parentDocumentId ?? ''

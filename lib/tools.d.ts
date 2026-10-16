@@ -19,6 +19,20 @@ export declare const LOCAL_SAVE_DIRNAME = "outline-auto-saves";
 /** 解析本地保存目录：配置优先，其次 $DSH_HOME/outline-auto-saves，最后 $HOME/outline-auto-saves。 */
 export declare function resolveLocalSaveDir(configured: string | undefined, env?: NodeJS.ProcessEnv): string;
 /**
+ * 本地保存的安全兜底：这些目录（及其子目录）一律不写，避免把知识库导出物丢进系统目录。
+ * 刻意**不带盘符**：判定时先剥掉 `C:` / `D:` 再比对，因此 Windows 装在非 C 盘时同样生效
+ * （带盘符的列表在 `D:\Windows` 这类布局下会整体失效）。
+ */
+export declare const UNSAFE_SAVE_DIR_ROOTS: readonly string[];
+/**
+ * `outline_save_local` 的落盘目录校验。**这是安全带，不是沙箱** —— 目录本身由用户配置，
+ * 只有目录不可信时才有意义；真正的边界仍是"文件系统权限"。
+ * 拒绝三类目标：① 磁盘/文件系统/共享根目录（写入范围会失控）；② 已知系统目录（盘符无关）。
+ * 判定对象是**折叠 `..` 之后的规范路径**，因此带 `..` 的写法绕不过去。
+ * @returns 拒绝理由；可写时返回 null。
+ */
+export declare function checkSaveDir(dir: string): string | null;
+/**
  * 根据平台调整文件名长度（Windows MAX_PATH=260 字符硬限）。
  * @returns 截断后的文件名（保留.md 后缀）
  */
@@ -104,12 +118,52 @@ export declare function outlineDocTemplateTool(): import("@deepseek-ai/dsh-tools
 export declare function resolveWriteGuard(collections: OutlineCollection[], collectionId: string): string | null;
 export declare function outlineResolvePathTool(makeClient: () => OutlineClient): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineListCollectionsTool(makeClient: () => OutlineClient): import("@deepseek-ai/dsh-tools").ToolDefinition;
+/**
+ * 写工具的已声明参数白名单。
+ *
+ * 为什么必须自查：宿主 `parameterSchemaSpecToJsonSchema`（dsh-tools 0.2.0-rc.2）生成的参数
+ * schema 是 `{type,properties,required}`，**不带 `additionalProperties: false`** ——
+ * 参数面默认开放，未声明的键能通过校验、不会报错。而各工具的 `execute` 只读取自己认识的字段，
+ * 于是「模型传 `append: true` 以为在追加 → 实际走整体覆盖并返回成功」这类
+ * **静默成功但语义被丢弃**的情况就会发生；对写操作而言这是数据损坏路径。
+ * 因此写工具在 `execute` 入口显式拒绝未知键（fail-closed），而不是静默忽略。
+ */
+export declare const CREATE_ARG_KEYS: readonly ["collectionId", "parentDocumentId", "title", "text", "publish"];
+export declare const UPDATE_ARG_KEYS: readonly ["id", "title", "text", "append", "publish"];
+export declare const DELETE_ARG_KEYS: readonly ["id"];
+/** 前缀式截断告警的触发门槛：按前缀判定时，至少要"少这么多字符"才值得打扰用户。 */
+export declare const TRUNCATION_PREFIX_MIN_LOST = 1000;
+/**
+ * 识别「把读取时被截断的正文写回」这一破坏性模式（读→改→写链路的静默丢内容路径）。
+ *
+ * 判据（任一命中即告警）：
+ * ① 新正文长度恰为 `outline_get_document` 的默认上限 20000，且原文更长 —— 典型的默认参数截断痕迹；
+ * ② 新正文是原文的**精确前缀**且少掉 `TRUNCATION_PREFIX_MIN_LOST`（1000）字符以上 ——
+ *    截断读出的内容按定义就是原文前缀，且丢失量足够大。
+ *
+ * 纯函数，可单测。返回告警文案（含确切字符数）供审批 reason 使用；不疑似截断时返回 null。
+ * 注意：判定为 `ask` 而非 `deny` —— 故意把长文裁剪到前 N 字符是合法诉求，交由用户带数据确认。
+ */
+export declare function detectTruncatedRewrite(originalText: string, nextText: string): string | null;
+/**
+ * 拒绝未声明的写入参数。纯函数（直接抛错），可单测。
+ * @param toolName 工具名（用于错误文案）
+ * @param args 模型传入的原始参数
+ * @param allowed 已声明参数键
+ */
+export declare function assertKnownWriteArgs(toolName: string, args: Record<string, unknown>, allowed: readonly string[]): void;
 export declare function outlineCreateTool(makeClient: () => OutlineClient, getWritablePaths: () => string): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineUpdateDocumentTool(makeClient: () => OutlineClient, getWritablePaths: () => string): import("@deepseek-ai/dsh-tools").ToolDefinition;
-/** 二次审批回调：由 index.ts 接线到 ctx.approval.request，返回是否 allowed-once。 */
+/**
+ * 二次审批回调：由 index.ts 接线到 ctx.approval.request，返回是否 allowed-once。
+ * `exec.signal` 必须一并透传 —— 宿主的 approval.request 用它做协作式取消竞速
+ * （`decide()` 在 signal 已中止时直接返回 cancelled；宿主自己的 serviceAsk 也是这么传的）。
+ * 不透传的话，用户在第二次弹窗期间取消本轮，这个 promise 不会以 cancelled 收敛。
+ */
 export type DeleteApprovalRequester = (reason: string, exec: {
     agent?: unknown;
     callId?: unknown;
+    signal?: unknown;
 }) => Promise<boolean>;
 export declare function outlineDeleteTool(makeClient: () => OutlineClient, getWritablePaths: () => string, requestApproval: DeleteApprovalRequester): import("@deepseek-ai/dsh-tools").ToolDefinition;
 export declare function outlineListChildrenTool(makeClient: () => OutlineClient): import("@deepseek-ai/dsh-tools").ToolDefinition;

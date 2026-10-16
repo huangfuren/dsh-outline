@@ -1,5 +1,6 @@
 import { createMockOutlineServer } from './mock-outline-server.mjs'
 import { apply } from '../lib/index.js'
+import { OutlineClient } from '../lib/client.js'
 
 // 冒烟必须自包含：清掉环境变量，避免环境里的 OUTLINE_* 盖过下方 config（优先级 GUI > env > config）。
 delete process.env.OUTLINE_BASE_URL
@@ -13,10 +14,17 @@ const baseUrl = `http://127.0.0.1:${port}`
 const tools = []
 // 冒烟不连真实宿主：settings 服务用假实现顶上，既让 installSection 不产生副作用，
 // 又能记录参数 —— 下面据此断言接缝确实被走到（lib/ 编译产物的行为证据，不止 grep）。
+// 关键：pre-execute 监听器与单调守卫都必须被真实捕获并驱动 —— 早期版本这里写的是
+// `on: () => () => {}`，等于让审批闸从未注册，冒烟因此完全没有覆盖写路径的唯一人工闸门。
 const injected = []
 let section = null
+const listeners = new Map()
+const guards = []
 const ctx = {
-  tools: { register: (definition) => { tools.push(definition) } },
+  tools: {
+    register: (definition) => { tools.push(definition) },
+    guard: (guard) => { guards.push(guard); return () => {} },
+  },
   inject: (names, callback) => {
     injected.push(names.join('+'))
     if (names.includes('settings')) {
@@ -24,7 +32,11 @@ const ctx = {
     }
     return () => {}
   },
-  on: () => () => {},
+  on: (name, listener) => {
+    if (!listeners.has(name)) listeners.set(name, [])
+    listeners.get(name).push(listener)
+    return () => {}
+  },
   get: (name) => name === 'approval' ? { request: async () => 'allowed-once' } : undefined,
 }
 apply(ctx, { baseUrl, apiToken: 'test-token', timeoutMs: 5000, searchLimit: 5, writablePaths: '测试集合', synonyms: { '部暑': ['部署'] } })
@@ -32,6 +44,27 @@ const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]))
 const exec = {}
 let failures = 0
 const check = (label, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${extra ? ' — ' + extra : ''}`); if (!ok) failures++ }
+
+/**
+ * 还原宿主 dsh-tools 0.2.0-rc.2 的策略链：
+ * waterfall("tools/pre-execute") → ask 经批准变 allow → 仅 allow 时查询 ctx.tools.guard()。
+ */
+async function runPipeline (name, args, h = { listeners, guards }) {
+  const call = { name, arguments: args, callId: 'smoke-call', agent: { session: {} }, signal: new AbortController().signal }
+  const chain = [...(h.listeners.get('tools/pre-execute') ?? [])]
+  const inner = () => Promise.resolve({ kind: 'allow' })
+  const next = () => (chain.shift() ?? inner)(call, next)
+  const decision = await next()
+  const effective = decision.kind === 'ask' ? { kind: 'allow' } : decision
+  let floorReason
+  if (effective.kind === 'allow') {
+    for (const guard of h.guards) {
+      const reason = guard(call)
+      if (reason !== undefined) { floorReason = reason; break }
+    }
+  }
+  return { decision, floorReason }
+}
 
 try {
   const search = await byName.outline_search.execute({ query: '部署', limit: 3 }, exec)
@@ -82,12 +115,63 @@ try {
   // 验证同义词回退阶梯（错别字 部暑 → 词表映射到 部署）
   const syn = await byName.outline_search.execute({ query: '部暑', limit: 5 }, exec)
   check('outline_search 同义词回退', syn.hits.length >= 1 && syn.retriedWith === '部署', JSON.stringify({ hits: syn.hits.length, retriedWith: syn.retriedWith }))
-  // 验证参数校验在 execute 层 fail-closed 兜底（pre-execute 未注册时）
+  // 验证参数校验在 execute 层 fail-closed 兜底：直调 execute 绕过 pre-execute 闸，仍须拒绝
   let paramError = false
   try { await byName.outline_update_document.execute({ id: 'doc-1' }, exec) } catch (e) { paramError = e.message?.includes('至少需要') }
-  check('outline_update_document 参数校验（execute 兜底）', paramError, 'pre-execute 未注册，走 execute 层')
+  check('outline_update_document 参数校验（execute 兜底）', paramError, '直调 execute 绕过闸，仍被拒绝')
   const tpl = await byName.outline_doc_template.execute({}, exec)
   check('outline_doc_template 返回模板', typeof tpl.template === 'string' && tpl.template.includes('【需求或目标】') && Array.isArray(tpl.sections), JSON.stringify(tpl.sections))
+
+  // —— 写路径闸（tools/pre-execute）：闸必须真的被注册并给出正确决策 ——
+  const gateRead = await runPipeline('outline_search', { query: '部署' })
+  check('闸：读工具不被阻拦', gateRead.decision.kind === 'allow' && gateRead.floorReason === undefined, JSON.stringify(gateRead.decision))
+  const gateCreateIn = await runPipeline('outline_create', { collectionId: 'col-1', title: 'T', text: 'x' })
+  check('闸：白名单内创建 → ask 且地板放行', gateCreateIn.decision.kind === 'ask' && gateCreateIn.floorReason === undefined)
+  const gateUpdateIn = await runPipeline('outline_update_document', { id: 'doc-1', title: 'T' })
+  check('闸：白名单内更新 → ask', gateUpdateIn.decision.kind === 'ask', JSON.stringify(gateUpdateIn.decision))
+  const gateDeleteIn = await runPipeline('outline_delete', { id: 'doc-1' })
+  check('闸：白名单内删除 → ask（第 1 次确认）', gateDeleteIn.decision.kind === 'ask' && String(gateDeleteIn.decision.reason).includes('第 1 次确认'))
+  const gateUpdateBad = await runPipeline('outline_update_document', { id: 'doc-1' })
+  check('闸：update 缺 title/text/publish → deny（不弹审批）', gateUpdateBad.decision.kind === 'deny' && String(gateUpdateBad.decision.reason).includes('至少需要'))
+
+  // —— 单调地板：他方监听器短路 waterfall 时，闸不执行 → 地板仍须拒绝写调用 ——
+  {
+    const scListeners = new Map()
+    const scGuards = []
+    const scCtx = {
+      tools: { register: () => {}, guard: (g) => { scGuards.push(g); return () => {} } },
+      inject: () => () => {},
+      on: (name, listener) => { if (!scListeners.has(name)) scListeners.set(name, []); scListeners.get(name).push(listener); return () => {} },
+      get: () => undefined,
+    }
+    // 抢先注册"允许"监听器且不调 next()：本插件的闸将被短路
+    scCtx.on('tools/pre-execute', async () => ({ kind: 'allow' }))
+    apply(scCtx, { baseUrl, apiToken: 'test-token', timeoutMs: 5000, searchLimit: 5, writablePaths: '测试集合' })
+    const sc = await runPipeline('outline_update_document', { id: 'doc-1', title: 'T' }, { listeners: scListeners, guards: scGuards })
+    check('地板：短路时写调用仍被拒绝', sc.decision.kind === 'allow' && typeof sc.floorReason === 'string' && sc.floorReason.includes('未经 dsh-outline 的审批闸'), String(sc.floorReason).slice(0, 60))
+    const scRead = await runPipeline('outline_search', { query: 'x' }, { listeners: scListeners, guards: scGuards })
+    check('地板：读工具不受影响', scRead.floorReason === undefined)
+  }
+
+  // —— 写参数 fail-closed：未声明的键必须报错，不能"返回成功但语义被丢弃" ——
+  let unknownArgErr = ''
+  try { await byName.outline_update_document.execute({ id: 'doc-1', text: 'x', collectionId: 'col-2' }, exec) } catch (e) { unknownArgErr = String(e.message) }
+  check('写工具拒绝未声明的参数', unknownArgErr.includes('不接受参数') && unknownArgErr.includes('collectionId'), unknownArgErr.slice(0, 70))
+
+  // —— append：追加语义不覆盖原文（长文改动的安全路径） ——
+  const created2 = await byName.outline_create.execute({ collectionId: 'col-1', title: 'append 冒烟', text: '# 原文' }, exec)
+  await byName.outline_update_document.execute({ id: created2.id, text: '\n【追加段】', append: true }, exec)
+  const appended = await byName.outline_get_document.execute({ id: created2.id }, exec)
+  check('append 追加不覆盖原文', appended.text.includes('# 原文') && appended.text.includes('【追加段】'), JSON.stringify(appended.text))
+  await byName.outline_delete.execute({ id: created2.id }, exec)
+
+  // —— delete 结果判定：宁可报失败，也不谎报"已删除" ——
+  const rawClient = new OutlineClient({ baseUrl, apiToken: 'test-token', timeoutMs: 5000 })
+  const confirmedDelete = await rawClient.deleteDocument('doc-3')
+  check('client.deleteDocument 顶层 success 视为成功', confirmedDelete.success === true, JSON.stringify(confirmedDelete))
+  let unconfirmedErr = ''
+  try { await rawClient.deleteDocument('unconfirmed-x') } catch (e) { unconfirmedErr = String(e.message) }
+  check('client.deleteDocument 无成功标记 → 抛错而不谎报成功', unconfirmedErr.includes('无法确认'), unconfirmedErr.slice(0, 70))
 
   // —— settings 接缝回归（防 v0.7.1 事故复现：宿主 0.1.5 移除了 installSettingsSection，
   //    卡片曾静默消失）。断言编译产物确实经 ctx.inject(['settings']) 调到 installSection，
