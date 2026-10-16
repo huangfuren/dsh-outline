@@ -24,10 +24,10 @@ DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审
 从公开 GitHub 仓库安装，并固定到最新发布 tag：
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.1
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.3
 ```
 
-`#v0.8.1` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
+`#v0.8.3` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
 
 安装后重启 `dsh web`。发布包已经包含编译后的 `lib/`，正常从 Git 安装时不依赖用户本地构建。本包**不再包含任何安装生命周期脚本**：早期版本带的 `postinstall` 清理钩子会触发 pnpm 的构建脚本审批（`ERR_PNPM_IGNORED_BUILDS`），导致桌面版等新 surface 的安装被中断。
 

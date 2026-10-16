@@ -44,10 +44,10 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 Install from the public GitHub repository, pinned to the latest release tag:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.1
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.3
 ```
 
-The `#v0.8.1` suffix pins the exact release; omit it to track the latest commit on `main`.
+The `#v0.8.3` suffix pins the exact release; omit it to track the latest commit on `main`.
 
 Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. This package ships **no install lifecycle scripts**: the `postinstall` cleanup hook it used to carry trips pnpm's build-script approval (`ERR_PNPM_IGNORED_BUILDS`), which aborts installation on newer surfaces such as the desktop app.
 

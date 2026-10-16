@@ -2,10 +2,10 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest released pre-1.0 version only (`0.7.x`). Install an immutable Git tag and upgrade when a new release is published:
+Security fixes are provided for the latest released pre-1.0 version only (`0.8.x`). Install an immutable Git tag and upgrade when a new release is published:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.0
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.3
 ```
 
 ## Reporting a vulnerability
