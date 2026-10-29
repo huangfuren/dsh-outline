@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+### Fixed — 搜索带不存在的 collectionId 时，403 不再被归因为 token 失效
+
+实测该实例对「不存在的集合 id」返回 `403 Authorization error`（而非 404），默认映射会让用户
+去排查 apiToken。现在 `outline_search` 在带 `collectionId` 时收到 403，错误信息会补充：
+「也可能是集合 id 不存在或无权访问——可用 outline_list_collections 核对 id」。
+不带 `collectionId` 的 403 与其他状态码不受影响。
+
 ### Fixed — 已删除文档的读取不再被当成现行内容
 
 实测确认 Outline 的 `documents.delete` 是软删除：`documents.info` 对已删文档仍返回 200（带 `deletedAt` 字段），

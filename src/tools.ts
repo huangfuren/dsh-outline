@@ -2,6 +2,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { mapWithConcurrency, OUTLINE_MAX_PAGE_SIZE } from './client.js'
+import { OutlineApiError } from './errors.js'
 import type { OutlineClient, OutlineSearchResult, OutlineSearchHit, OutlineDocument, OutlineCollection, OutlineCreateResult, OutlineUser } from './client.js'
 
 export const SEARCH_MAX_LIMIT = 25
@@ -623,7 +624,20 @@ export function outlineSearchTool(
         }
         return collect()
       }
-      let result = await runQuery(args.query)
+      let result: OutlineSearchResult
+      try {
+        result = await runQuery(args.query)
+      } catch (error) {
+        // 实测该实例对「不存在的 collectionId」返回 403 "Authorization error"，
+        // 默认映射会让用户去排查 token；这里把真正的可疑点挑明。
+        if (error instanceof OutlineApiError && error.status === 403 && args.collectionId !== undefined && args.collectionId !== '') {
+          throw new OutlineApiError(error.kind,
+            `${error.message}\n补充：本次搜索带了 collectionId=${args.collectionId}。实测该实例对「不存在的集合 id」也返回 403，`
+            + '所以这同样可能是集合 id 不存在或无权访问，而不一定是 token 失效——可用 outline_list_collections 核对 id。',
+            403)
+        }
+        throw error
+      }
       let effectiveQuery = args.query
       // 零命中回退阶梯：原词 → 首词（多词查询易 AND 落空）→ 同义词表变体（配置 synonyms）。
       if (result.hits.length === 0 && result.total === 0) {

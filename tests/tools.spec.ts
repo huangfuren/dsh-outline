@@ -1198,3 +1198,32 @@ describe('outline_search 空关键词走 list 路径（按更新时间倒序）'
     expect(text).toContain('offset=1')
   })
 })
+
+describe('outline_search 的 403 归因提示（实例对不存在的 collectionId 也返回 403）', () => {
+  const authErr = new OutlineApiError('auth', 'Outline API 认证失败（HTTP 403）：请检查 apiToken 是否有效且有权访问。', 403)
+
+  it('带 collectionId 时 403 提示补充「可能是集合 id 不存在」', async () => {
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async () => { throw authErr },
+    }), 10)
+    const err = await tool.execute({ query: '部署', collectionId: 'bad-id' }, exec).catch((e) => e)
+    expect(err).toBeInstanceOf(OutlineApiError)
+    expect(err.message).toContain('collectionId=bad-id')
+    expect(err.message).toContain('集合 id 不存在')
+    expect(err.kind).toBe('auth')
+  })
+
+  it('不带 collectionId 时 403 原样透传，不添乱', async () => {
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async () => { throw authErr },
+    }), 10)
+    await expect(tool.execute({ query: '部署' }, exec)).rejects.toThrow(/apiToken 是否有效/)
+  })
+
+  it('非 403 错误不受影响', async () => {
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async () => { throw new OutlineApiError('not-found', 'HTTP 404', 404) },
+    }), 10)
+    await expect(tool.execute({ query: '部署', collectionId: 'bad-id' }, exec)).rejects.toMatchObject({ kind: 'not-found' })
+  })
+})
