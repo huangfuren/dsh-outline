@@ -4,7 +4,7 @@
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.9.0。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（228 个单元测试 + 端到端冒烟）。
+> 当前版本：0.9.0。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（229 个单元测试 + 端到端冒烟）。
 
 ## 功能
 
@@ -130,7 +130,7 @@ dsh plugin --profile <profile> why dsh-outline
 ## 兼容性与发布检查
 
 - 使用 DSH `0.1.5-rc.2` 或更高的同一兼容范围测试；更早版本既没有 `settings.installSection`，也没有客户端注入兼容保证。
-- 执行 `pnpm typecheck`、`pnpm build`、`pnpm test`（228 个单元测试，包含跨平台边界用例）和 `node scripts/smoke.mjs`（端到端集成测试）。
+- 执行 `pnpm typecheck`、`pnpm build`、`pnpm test`（229 个单元测试，包含跨平台边界用例）和 `node scripts/smoke.mjs`（端到端集成测试）。
 - 压缩包排除 `node_modules`、`.git`、settings 文件、token、内部地址和内部文档名称。
 - 在干净的 `web` profile 中安装 GitHub 地址或压缩包，确认插件列表和插件配置两个入口都可见。
 - 发布前搜索整个发布目录中的组织专属名称；检查失败就停止发布。

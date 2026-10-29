@@ -6,6 +6,27 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [v0.9.0] - 2026-10-29
 
+### Added — Outline 新老版本兼容（v0.79 ~ v1.12+）
+
+按 Outline 服务端 schema 源码逐版本核对（v0.79 / v0.83 / v1.0 / v1.5 / v1.9 / v1.12 / main），
+把跨版本会变的三个参数面各自做成兼容实现，而不是绑在某一个版本的写法上。
+
+| 能力 | v0.79 – v1.8 | v1.9 – v1.11 | v1.12+ |
+| --- | --- | --- | --- |
+| 追加正文 | `append: true` | `editMode: "append"` | `editMode: "append"` |
+| 集合 / 作者过滤 | 顶层 `collectionId` / `userId` | 同左（已标弃用） | `filters` 数组，与旧参数**互斥** |
+| 时间过滤 | 服务端不支持 | 服务端不支持 | `filters` + `updatedAt` + `gte` |
+
+- **追加双发**：`updateDocument` 在 `append: true` 时同时发 `append` 与 `editMode: "append"`。
+  老版本丢弃 `editMode` 用 `append`；新版本在 transform 里把 `append` 转成 `editMode` 后删除。
+  只发其中一个都会在另一侧退化成**整篇覆盖**——这是最危险的失败模式，不报错、静默替换正文。
+- **时间过滤探测**：`supportsFilters()` 用一次「未来时间点」的 `documents.list` 探测实例能力
+  （支持则 `total=0`，不支持则 `filters` 被静默丢弃、返回真实总数；库为空时再取一次全库计数区分）。
+  探测结果缓存在实例上，只有真要按时间过滤时才触发，普通搜索零额外请求。
+- **探测失败语义**：只有服务端明确拒绝参数（400/422）才判为「不支持」；网络故障、鉴权失败一律向上抛，
+  避免一次偶发失败被固化成本实例永久的能力误判。
+- 返回结构新增 `timeFilterMode: "server" | "client"`，渲染层据此说明时间过滤是服务端做的还是本地补的。
+
 ### Added — 无关键词的时间检索改走 `documents.list`（精确，不再靠相关度猜）
 
 上一轮修复后仍有一处语义缺口：空关键词 + `updatedAfter` 走的是 `documents.search`，而它按
@@ -51,27 +72,6 @@ All notable changes to this project are documented here. Release-specific notes 
      聚合后丢失 `timeFilterMode`，渲染层根本进不了 client 分支）。
 
 实测对照（`C1` + 近 7 天）：修复前命中 6 条、2 次请求后提前退出；修复后命中 12 条、扫描 300 篇候选。
-
-### Added — Outline 新老版本兼容（v0.79 ~ v1.12+）
-
-按 Outline 服务端 schema 源码逐版本核对（v0.79 / v0.83 / v1.0 / v1.5 / v1.9 / v1.12 / main），
-把跨版本会变的三个参数面各自做成兼容实现，而不是绑在某一个版本的写法上。
-
-| 能力 | v0.79 – v1.8 | v1.9 – v1.11 | v1.12+ |
-| --- | --- | --- | --- |
-| 追加正文 | `append: true` | `editMode: "append"` | `editMode: "append"` |
-| 集合 / 作者过滤 | 顶层 `collectionId` / `userId` | 同左（已标弃用） | `filters` 数组，与旧参数**互斥** |
-| 时间过滤 | 服务端不支持 | 服务端不支持 | `filters` + `updatedAt` + `gte` |
-
-- **追加双发**：`updateDocument` 在 `append: true` 时同时发 `append` 与 `editMode: "append"`。
-  老版本丢弃 `editMode` 用 `append`；新版本在 transform 里把 `append` 转成 `editMode` 后删除。
-  只发其中一个都会在另一侧退化成**整篇覆盖**——这是最危险的失败模式，不报错、静默替换正文。
-- **时间过滤探测**：`supportsFilters()` 用一次「未来时间点」的 `documents.list` 探测实例能力
-  （支持则 `total=0`，不支持则 `filters` 被静默丢弃、返回真实总数；库为空时再取一次全库计数区分）。
-  探测结果缓存在实例上，只有真要按时间过滤时才触发，普通搜索零额外请求。
-- **探测失败语义**：只有服务端明确拒绝参数（400/422）才判为「不支持」；网络故障、鉴权失败一律向上抛，
-  避免一次偶发失败被固化成本实例永久的能力误判。
-- 返回结构新增 `timeFilterMode: "server" | "client"`，渲染层据此说明时间过滤是服务端做的还是本地补的。
 
 ### Fixed — `updatedAfter` 在真实 Outline 上从未生效
 
