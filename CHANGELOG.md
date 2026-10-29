@@ -4,9 +4,54 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+### Added — Outline 新老版本兼容（v0.79 ~ v1.12+）
+
+按 Outline 服务端 schema 源码逐版本核对（v0.79 / v0.83 / v1.0 / v1.5 / v1.9 / v1.12 / main），
+把跨版本会变的三个参数面各自做成兼容实现，而不是绑在某一个版本的写法上。
+
+| 能力 | v0.79 – v1.8 | v1.9 – v1.11 | v1.12+ |
+| --- | --- | --- | --- |
+| 追加正文 | `append: true` | `editMode: "append"` | `editMode: "append"` |
+| 集合 / 作者过滤 | 顶层 `collectionId` / `userId` | 同左（已标弃用） | `filters` 数组，与旧参数**互斥** |
+| 时间过滤 | 服务端不支持 | 服务端不支持 | `filters` + `updatedAt` + `gte` |
+
+- **追加双发**：`updateDocument` 在 `append: true` 时同时发 `append` 与 `editMode: "append"`。
+  老版本丢弃 `editMode` 用 `append`；新版本在 transform 里把 `append` 转成 `editMode` 后删除。
+  只发其中一个都会在另一侧退化成**整篇覆盖**——这是最危险的失败模式，不报错、静默替换正文。
+- **时间过滤探测**：`supportsFilters()` 用一次「未来时间点」的 `documents.list` 探测实例能力
+  （支持则 `total=0`，不支持则 `filters` 被静默丢弃、返回真实总数；库为空时再取一次全库计数区分）。
+  探测结果缓存在实例上，只有真要按时间过滤时才触发，普通搜索零额外请求。
+- **探测失败语义**：只有服务端明确拒绝参数（400/422）才判为「不支持」；网络故障、鉴权失败一律向上抛，
+  避免一次偶发失败被固化成本实例永久的能力误判。
+- 返回结构新增 `timeFilterMode: "server" | "client"`，渲染层据此说明时间过滤是服务端做的还是本地补的。
+
+### Fixed — `updatedAfter` 在真实 Outline 上从未生效
+
+- **现象**：`outline_search` 的 `updatedAfter` 一直被当作请求体顶层参数发给服务端，但
+  `DocumentsSearchSchema` 从来没有这个字段（v0.79 到 main 一致）。Outline 的 zod schema 没有
+  `.strict()`，未知键被**静默 strip** → 过滤不生效、也不报错，工具却对外承诺「只返回此时间之后更新的文档」。
+- **为什么测试没抓到**：`scripts/mock-outline-server.mjs` 自己实现了 `updatedAfter` 过滤，
+  冒烟用例一直是绿的 —— 自建 mock 实现了服务端不存在的语义，等于给自己发了一张假绿卡。
+  mock 已删除该实现，改为按实例能力分别模拟（`createMockOutlineServer({ filters: true })`）。
+- **修复**：新实例走 `filters` + `updatedAt` + `gte`（`date` 类型在范围算子下同时接受绝对 ISO 日期与 ISO 时长）；
+  老实例没有该能力，改为对取回的那一页按 `updatedAt` 本地筛选，并在结果里标注 `timeFilterMode: "client"`。
+  `updatedAfter` 无法解析时直接报错，不再静默放行。
+
+### Changed
+
+- 新增冒烟断言：`filters` 实例下时间过滤走服务端、集合+作者+时间三条件同时生效；
+  老实例下标注为 `client`。断言同时要求命中非空——`every()` 对空数组恒真，只看它会放过「过滤把结果全筛掉」的退化。
+
 ### Known issues
 
-- `tests/settings.spec.ts` 继承 `SettingsProvider` 并用 `installSection` 做真实注册断言。该 API 在 dsh 0.1.7 已被移除，升级宿主后此测试文件将无法编译，需按新版 Metcalfe 写法重写（改用原生 Config layering 断言）。此为**仅测试侧**待办，不影响运行期。
+- `tests/settings.spec.ts` 继承 `SettingsProvider` 并用 `installSection` 做真实注册断言，
+  但仓库依赖解析到的是 `@deepseek-ai/dsh-settings@0.1.5-rc.2`（peer 要求 cordis `^4.0.2`，实际装 4.0.1），
+  验证的是 0.1.x 契约，覆盖不到 0.2.x。**运行期安全**：`src/index.ts` 对
+  `typeof settings.installSection === 'function'` 有判断，缺失时退回 `settings.configure`。
+- 该测试对 lockfile 的 peer 解析结果敏感：一旦同一份 lockfile 里出现多份 `dsh-settings` 变体
+  （不同 cordis peer 组合），注册与查找会落到不同实例，表现为
+  `settings namespace "outline-auto" is not registered`。这属于依赖图问题，不是代码缺陷；
+  合并只改 lockfile 的依赖 PR 前应先确认 `dsh-settings` 仍只有单一变体。
 
 ## [v0.8.3] - 2026-10-16
 

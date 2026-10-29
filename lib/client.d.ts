@@ -16,12 +16,21 @@ export interface OutlineSearchHit {
     /** 作者显示名（取自搜索响应的 createdBy.name；缺省时回退 users.list 映射）。 */
     authorName?: string;
 }
+/**
+ * 时间过滤的实际生效位置。
+ * - `server`：实例支持 `filters`（Outline 1.12+），过滤在服务端完成，total 与 hits 一致。
+ * - `client`：实例不支持 `filters`，改为对已取回的这一页按 updatedAt 本地筛选；
+ *   `total` 仍是服务端未过滤的总数，hits 可能少于 limit。
+ */
+export type TimeFilterMode = 'server' | 'client';
 /** 搜索结果：命中列表 + 该关键词在知识库中的匹配总数（pagination.total）。 */
 export interface OutlineSearchResult {
     total: number;
     hits: OutlineSearchHit[];
     /** 多词查询零命中时自动用首词重试成功后，记录实际生效的首词。 */
     retriedWith?: string;
+    /** 仅在请求带 `updatedAfter` 时出现，说明时间过滤是服务端做的还是本地补的。 */
+    timeFilterMode?: TimeFilterMode;
 }
 export interface OutlineDocument {
     id: string;
@@ -82,6 +91,11 @@ export declare class OutlineClient {
     private usersCache;
     /** searchDocuments 结果的短期缓存（key = 归一化查询参数），同 query 连续提问不重复打 API。 */
     private readonly searchCache;
+    /**
+     * 实例是否支持 `filters` 数组式过滤（Outline 1.12 起引入；此前版本会把该字段
+     * 当未知键静默丢弃且不报错）。`undefined` = 尚未探测。
+     */
+    private filterSupport;
     private static readonly SEARCH_CACHE_MAX_ENTRIES;
     /** Outline 服务端分页上限（limit > 100 直接返回 400 "Pagination limit is too large"）。 */
     private static readonly MAX_PAGE_SIZE;
@@ -104,6 +118,18 @@ export declare class OutlineClient {
      * 页偏移按上一页实际返回条数推进：服务端若把 limit 压得更小也不会漏页。
      */
     private fetchAllPages;
+    /**
+     * 探测实例是否支持 `filters` 式查询（Outline 1.12 起引入）。
+     *
+     * 判据：带一个「未来时间点」的 updatedAt 过滤做一次最小查询。
+     * - 支持：服务端真的按条件过滤 → `pagination.total` = 0
+     * - 不支持：`filters` 被当未知键静默丢弃（Outline 的 schema 没有 `.strict()`，不报错）→ total = 库里真实总数
+     *
+     * 只在真正需要时间过滤时调用，结果缓存在实例上（同一实例的运行期版本不会中途变化）。
+     * **不能吞掉所有异常**：只有「服务端明确拒绝该参数」（400/422）才算「不支持」；
+     * 网络故障、鉴权失败必须向上抛，否则一次偶发失败会被固化成永久的能力误判。
+     */
+    private supportsFilters;
     searchDocuments(query: string, limit: number, collectionId?: string, filters?: {
         userId?: string;
         updatedAfter?: string;

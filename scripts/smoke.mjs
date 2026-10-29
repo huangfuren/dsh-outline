@@ -100,9 +100,10 @@ try {
   // 验证 userId 过滤（mock server 已支持）
   const byUser = await byName.outline_search.execute({ query: '', limit: 10, userId: 'user-2' }, exec)
   check('outline_search userId 过滤', byUser.hits.length >= 1, `got ${byUser.hits.length} hits`)
-  // 验证 updatedAfter 过滤
+  // 老实例（默认 mock 模拟 Outline ≤ 1.11）：服务端没有时间过滤能力，
+  // 插件必须本地筛选并如实标注，而不是假装服务端已过滤。
   const recent = await byName.outline_search.execute({ query: '', limit: 10, updatedAfter: '2026-03-01' }, exec)
-  check('outline_search updatedAfter 过滤', recent.hits.length >= 1, `got ${recent.hits.length} hits`)
+  check('outline_search updatedAfter 在老实例本地筛选并标注', recent.hits.length >= 1 && recent.timeFilterMode === 'client', `got ${recent.hits.length} hits, mode=${recent.timeFilterMode}`)
   // 验证 snippet 保留原始 HTML 高亮标签
   const searchWithHtml = await byName.outline_search.execute({ query: '部署', limit: 1 }, exec)
   check('outline_search snippet 保留原始上下文', searchWithHtml.hits[0] && typeof searchWithHtml.hits[0].snippet === 'string', JSON.stringify(searchWithHtml))
@@ -195,5 +196,36 @@ try {
 }
 
 await new Promise((resolve) => server.close(resolve))
+
+// —— Outline 1.12+ 实例（支持 filters 数组）：时间过滤应下推到服务端 ——
+// 数据可能被上面的用例增删过，所以这里只断言"模式正确 + 结果确实满足条件"，不锁条数。
+{
+  const newServer = createMockOutlineServer({ filters: true })
+  await new Promise((resolve) => newServer.listen(0, '127.0.0.1', resolve))
+  try {
+    const newBase = `http://127.0.0.1:${newServer.address().port}`
+    const c = new OutlineClient({ baseUrl: newBase, apiToken: 'test-token', timeoutMs: 5000 })
+    const after = await c.searchDocuments('', 10, undefined, { updatedAfter: '2026-01-01' })
+    check('filters 实例：时间过滤走服务端', after.timeFilterMode === 'server', `mode=${after.timeFilterMode}`)
+    // 必须同时要求非空：`every()` 对空数组恒为 true，只看它会放过"过滤把结果全筛掉"的退化。
+    check(
+      'filters 实例：返回结果均满足时间条件',
+      after.hits.length >= 1 && after.hits.every((h) => new Date(h.updatedAt).getTime() >= new Date('2026-01-01').getTime()),
+      `${after.hits.length} hits: ${JSON.stringify(after.hits.map((h) => h.updatedAt))}`,
+    )
+    const scoped = await c.searchDocuments('', 10, 'col-1', { userId: 'user-1', updatedAfter: '2026-01-01' })
+    check(
+      'filters 实例：集合 + 作者 + 时间三条件同时生效',
+      scoped.hits.length >= 1 && scoped.hits.every((h) => h.collectionId === 'col-1') && scoped.timeFilterMode === 'server',
+      `${scoped.hits.length} hits: ${JSON.stringify(scoped.hits.map((h) => [h.id, h.collectionId]))}`,
+    )
+  } catch (error) {
+    console.error('SMOKE ERROR (filters 实例):', error)
+    failures++
+  } finally {
+    await new Promise((resolve) => newServer.close(resolve))
+  }
+}
+
 if (failures > 0) { console.error(`SMOKE FAILED (${failures})`); process.exit(1) }
 console.log('SMOKE PASS')

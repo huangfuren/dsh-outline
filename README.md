@@ -37,6 +37,22 @@ A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getou
 | DeepSeek Harness | `0.1.5-rc.2` baseline; `0.2.x` (`>=0.2.0-rc.1 <1.0.0`) adapted |
 | Outline instance | reachable from your machine (intranet / VPN), with an API token (Outline → Settings → API keys) |
 
+## Outline version compatibility
+
+The plugin talks to eight core endpoints (`documents.search|list|info|create|update|delete`, `collections.list`, `users.list`), whose request and response shapes have stayed the same from `v0.79` through `v1.12`. What does change across versions is a few request parameters, and the plugin adapts at runtime instead of pinning one version's syntax:
+
+| Capability | v0.79 – v1.8 | v1.9 – v1.11 | v1.12+ |
+| --- | --- | --- | --- |
+| Append to document body | `append: true` | `editMode: "append"` | `editMode: "append"` |
+| Collection / author filter | top-level `collectionId` / `userId` | same (deprecated) | `filters` array, **mutually exclusive** with the legacy keys |
+| Time filter (`updatedAfter`) | not supported by the server | not supported | `filters` with `updatedAt` + `gte` |
+
+How that is handled:
+
+- **Append sends both keys.** With `append: true` the request carries `append: true` *and* `editMode: "append"`. Older servers ignore `editMode`; newer ones convert `append` into `editMode` and delete it. Sending only one of them silently degrades to a **full overwrite** on the other side — no error, just replaced content, which is why both are always sent.
+- **Time filtering is probed once per instance.** A `documents.list` with a future-dated `updatedAt` filter tells the plugin whether the server honours `filters` (empty result = yes, real total = the field was stripped). Supported instances get the filter pushed down and return `timeFilterMode: "server"`; older ones have the page filtered locally and return `timeFilterMode: "client"`. The legacy server has no `updatedAfter` parameter at all — it never existed in any Outline release, so there is nothing to send.
+- **Collection / author filtering keeps the top-level keys**, which every version accepts. They are deprecated in 1.12+ but not removed; the `filters` path is entered only when a time filter is also requested, because the server rejects the two combined.
+
 ## Installation
 
 ### Recommended: DSH-managed install

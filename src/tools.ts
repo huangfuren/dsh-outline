@@ -72,10 +72,22 @@ export function synonymVariants(query: string, synonyms: Record<string, string[]
   return out.slice(0, 3)
 }
 
-function renderSearchResults(result: OutlineSearchResult, allMode = false): string {
-  const { total, hits } = result
+// 入参用结构类型而非 OutlineSearchResult：output schema 里 timeFilterMode 声明为 string，
+// 与 client 侧的 'server' | 'client' 字面量联合不完全同构，这里只需按值比较，不必收窄。
+function renderSearchResults(
+  result: { total: number; hits: OutlineSearchHit[]; timeFilterMode?: string },
+  allMode = false,
+): string {
+  const { total, hits, timeFilterMode } = result
+  // 老实例没有服务端时间过滤：这一页是过滤前的结果，本地筛选后可能为空，
+  // 而 total 仍是过滤前总数。不说明的话用户会看到「匹配 N 篇却 0 条结果」。
+  const clientFiltered = timeFilterMode === 'client'
+  const clientNote = clientFiltered
+    ? '\n\n⚠️ 此实例不支持服务端时间过滤（Outline 1.12 之前的版本没有 filters 参数），已对取回的这一页按更新时间本地筛选；'
+      + 'total 是筛选前的总数。只取单页时结果可能不全：需要完整覆盖请用 all: true 翻页取全，本地筛选会逐页生效。'
+    : ''
   if (hits.length === 0) {
-    return total > 0 ? `该关键词共匹配 ${total} 篇文档，但未返回可展示的结果。` : '未找到匹配文档，可尝试更换关键词（如去掉停用词、改用更短的词）。'
+    return (total > 0 ? `该关键词共匹配 ${total} 篇文档，但未返回可展示的结果。` : '未找到匹配文档，可尝试更换关键词（如去掉停用词、改用更短的词）。') + clientNote
   }
   const fetchedAll = allMode && hits.length >= total
   const head = fetchedAll
@@ -90,7 +102,7 @@ function renderSearchResults(result: OutlineSearchResult, allMode = false): stri
     const author = hit.authorName !== undefined && hit.authorName !== '' ? `（作者：${hit.authorName}）` : ''
     return `- [${escapeLinkText(hit.title)}](${wrapUrl(hit.url)})${meta}（id: ${hit.id}）${author}`
   })
-  return `${head}\n${lines.join('\n')}${tail}\n\n如需查看某篇全文，请使用 outline_get_document 工具（参数 id）。`
+  return `${head}\n${lines.join('\n')}${tail}${clientNote}\n\n如需查看某篇全文，请使用 outline_get_document 工具（参数 id）。`
 }
 
 function renderDocument(doc: OutlineDocument, truncated: boolean): string {
@@ -413,7 +425,7 @@ export function outlineSearchTool(
       collectionId: { type: 'string', description: '可选，限定搜索某个集合（用 outline_list_collections 获取 id）' },
       author: { type: 'string', description: '可选，按作者过滤：姓名或邮箱（先精确后模糊匹配；匹配到多人时返回候选列表，请换 outline_list_users 查 id）' },
       userId: { type: 'string', description: '可选，按作者过滤（用户 id，精确值；可先用 outline_list_users 查询）' },
-      updatedAfter: { type: 'string', description: '可选，只返回此时间之后更新的文档（ISO 时间，如 2026-08-01T00:00:00Z 或 2026-08-01）' },
+      updatedAfter: { type: 'string', description: '可选，只返回此时间之后更新的文档（ISO 日期或时间，如 2026-08-01）。Outline 1.12+ 在服务端过滤；更早版本无此能力，改为对取回的那一页本地筛选（返回 timeFilterMode=client 提示）' },
       offset: { type: 'integer', description: '可选，跳过前 N 条结果（配合 limit 翻页查看更多，默认 0）' },
       all: { type: 'boolean', description: '可选，true = 自动翻页抓取该关键词的全部匹配（上限 100 篇，跨页去重）；适合"列全所有相关文档"类需求' },
     },
@@ -442,6 +454,7 @@ export function outlineSearchTool(
             },
           },
           retriedWith: { type: 'string', description: '原词零命中时实际生效的重试词（多词查询首词或同义词表变体）' },
+          timeFilterMode: { type: 'string', description: '时间过滤的生效位置：server = 服务端过滤（Outline 1.12+）；client = 实例不支持，已对当前页本地筛选，total 为筛选前总数' },
         },
       },
       render: (args, value) => [{

@@ -4,7 +4,7 @@
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.8.1。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（152+ 单元测试）。
+> 当前版本：0.8.3。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（215 个单元测试 + 端到端冒烟）。
 
 ## 功能
 
@@ -16,6 +16,22 @@ DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审
 - 创建、更新和删除属于写操作，每次执行前需要用户审批；删除还需要第二次确认。
 - 设置卡片位于 设置 -> 插件 -> 插件配置；插件状态位于 设置 -> 插件 -> 插件列表。
 - 未配置 Outline 地址或 token 时，插件仍可启动，工具会返回配置提示。
+
+## Outline 版本兼容
+
+插件只调用 8 个核心端点（`documents.search|list|info|create|update|delete`、`collections.list`、`users.list`），它们的请求与响应形态从 `v0.79` 到 `v1.12` 没有变过。跨版本会变的是几个请求参数，插件在运行期适配，而不是绑定某一版的写法：
+
+| 能力 | v0.79 – v1.8 | v1.9 – v1.11 | v1.12+ |
+| --- | --- | --- | --- |
+| 追加正文 | `append: true` | `editMode: "append"` | `editMode: "append"` |
+| 集合 / 作者过滤 | 顶层 `collectionId` / `userId` | 同左（已标弃用） | `filters` 数组，与旧参数**互斥** |
+| 时间过滤（`updatedAfter`） | 服务端不支持 | 服务端不支持 | `filters` + `updatedAt` + `gte` |
+
+具体处理方式：
+
+- **追加同时发两个键**：带 `append: true` 时，请求体同时含 `append: true` 与 `editMode: "append"`。老版本丢弃 `editMode` 用 `append`；新版本把 `append` 转成 `editMode` 后删除。只发其中一个，会在另一侧**静默退化成整篇覆盖**——不报错、正文被替换，所以两个都发。
+- **时间过滤按实例探测一次**：用一次「未来时间点」的 `documents.list` 判断实例是否认 `filters`（返回空 = 认，返回真实总数 = 字段被丢弃）。认的实例把过滤下推到服务端并返回 `timeFilterMode: "server"`；不认的实例对取回的那一页本地筛选并返回 `timeFilterMode: "client"`。老版本服务端**根本没有** `updatedAfter` 这个参数——它在任何 Outline 版本里都不存在，没有可发的东西。
+- **集合 / 作者过滤继续用顶层参数**，各版本都接受。1.12+ 标了弃用但没移除；只有同时要求时间过滤时才走 `filters` 路径，因为服务端拒绝两者并存。
 
 ## 安装
 

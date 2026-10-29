@@ -291,12 +291,14 @@ describe('OutlineClient', () => {
     expect(doc).toMatchObject({ id: 'd1', title: '新标题', url: 'https://outline.example.com/doc/d1' })
   })
 
-  it('updateDocument 透传 append（Outline 原生追加语义，避免整体覆盖）', async () => {
+  it('updateDocument 追加语义双发 append + editMode（兼容 Outline 1.9 前后）', async () => {
+    // v0.79~v1.8 只认 append（editMode 被丢弃）；v1.9+ 认 editMode（append 由服务端转换后删除）。
+    // 只发其中一个都会在某个版本区间退化成「整篇覆盖」，因此必须同时发。
     const client = new OutlineClient({
       baseUrl: 'https://outline.example.com',
       apiToken: 'tok',
       fetchImpl: stubFetch(async (_url, init) => {
-        expect(JSON.parse(String(init.body))).toEqual({ id: 'd1', text: '追加段', append: true })
+        expect(JSON.parse(String(init.body))).toEqual({ id: 'd1', text: '追加段', append: true, editMode: 'append' })
         return { status: 200, body: { data: { id: 'd1', title: 'T', url: '/doc/d1', published: true } } }
       }),
     })
@@ -389,20 +391,127 @@ describe('OutlineClient', () => {
     expect(await client.deleteDocument('d1')).toEqual({ success: true })
   })
 
-  it('searchDocuments 透传 userId/updatedAfter（顶层参数）', async () => {
+  it('searchDocuments 在老实例上把 updatedAfter 降级为本地筛选', async () => {
+    // 老实例（Outline <= 1.11）没有 filters：探测请求的 filters 被丢弃，返回全库真实总数。
+    const bodies: any[] = []
     const client = new OutlineClient({
       baseUrl: 'https://outline.example.com',
       apiToken: 'tok',
-      fetchImpl: stubFetch(async (_url, init) => {
-        expect(JSON.parse(String(init.body))).toEqual({
-          query: 'x', limit: 5, collectionId: 'c1', userId: 'u1',
-          updatedAfter: '2026-08-01',
-        })
+      fetchImpl: stubFetch(async (url, init) => {
+        bodies.push(JSON.parse(String(init.body)))
+        if (String(url).includes('/api/documents.list')) {
+          return { status: 200, body: { data: [{ id: 'x' }], pagination: { total: 37 } } }
+        }
+        return {
+          status: 200,
+          body: {
+            data: [
+              { context: '新', document: { id: 'new', title: '新文档', url: '/d/new', collectionId: 'c1', updatedAt: '2026-09-01T00:00:00Z' } },
+              { context: '旧', document: { id: 'old', title: '旧文档', url: '/d/old', collectionId: 'c1', updatedAt: '2026-01-01T00:00:00Z' } },
+            ],
+            pagination: { total: 2 },
+          },
+        }
+      }),
+    })
+    const r = await client.searchDocuments('x', 5, 'c1', { userId: 'u1', updatedAfter: '2026-08-01' })
+    expect(r.timeFilterMode).toBe('client')
+    expect(r.hits.map((h) => h.id)).toEqual(['new'])
+    // 搜索请求仍走各版本都认的顶层参数，且不再发那个服务端从未支持的 updatedAfter
+    const searchBody = bodies.find((b) => b.query === 'x')
+    expect(searchBody).toEqual({ query: 'x', limit: 5, collectionId: 'c1', userId: 'u1' })
+    expect(searchBody.updatedAfter).toBeUndefined()
+  })
+
+  it('searchDocuments 在新实例上用 filters 数组服务端过滤（旧参数全部搬进去）', async () => {
+    // 新实例（1.12+）：探测带 filters 且是未来时间 → total=0；全库计数 → 12。
+    const bodies: any[] = []
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (url, init) => {
+        const body = JSON.parse(String(init.body))
+        bodies.push(body)
+        if (String(url).includes('/api/documents.list')) {
+          return { status: 200, body: { data: [], pagination: { total: body.filters !== undefined ? 0 : 12 } } }
+        }
         return { status: 200, body: { data: [], pagination: { total: 0 } } }
       }),
     })
     const r = await client.searchDocuments('x', 5, 'c1', { userId: 'u1', updatedAfter: '2026-08-01' })
-    expect(r.total).toBe(0)
+    expect(r.timeFilterMode).toBe('server')
+    const searchBody = bodies.find((b) => b.query === 'x')
+    expect(searchBody).toEqual({
+      query: 'x',
+      limit: 5,
+      filters: [
+        { field: 'collectionId', operator: 'eq', value: 'c1' },
+        { field: 'userId', operator: 'eq', value: 'u1' },
+        { field: 'updatedAt', operator: 'gte', value: '2026-08-01' },
+      ],
+    })
+    // 与服务端旧参数互斥：同时出现会被 400 拒绝
+    expect(searchBody.collectionId).toBeUndefined()
+    expect(searchBody.userId).toBeUndefined()
+  })
+
+  it('探测被服务端 400 拒绝时判定为不支持 filters，回退顶层参数', async () => {
+    let searchBody: any
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (url, init) => {
+        if (String(url).includes('/api/documents.list')) {
+          return { status: 400, body: { ok: false, error: 'Invalid input' } }
+        }
+        searchBody = JSON.parse(String(init.body))
+        return { status: 200, body: { data: [], pagination: { total: 0 } } }
+      }),
+    })
+    const r = await client.searchDocuments('x', 5, undefined, { updatedAfter: '2026-08-01' })
+    expect(r.timeFilterMode).toBe('client')
+    expect(searchBody).toEqual({ query: 'x', limit: 5 })
+  })
+
+  it('探测遇网络故障时向上抛，不把实例永久判成不支持 filters', async () => {
+    // 宽 catch 会把「连不上」固化成「这实例没有 filters 能力」，之后永远走本地筛选。
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async (url) => {
+        if (String(url).includes('/api/documents.list')) throw new Error('ECONNRESET')
+        return { status: 200, body: { data: [], pagination: { total: 0 } } }
+      }),
+    })
+    await expect(client.searchDocuments('x', 5, undefined, { updatedAfter: '2026-08-01' })).rejects.toThrow(/无法连接|ECONNRESET/)
+  })
+
+  it('updatedAfter 无法解析时直接报错，不发请求', async () => {
+    let calls = 0
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async () => {
+        calls += 1
+        return { status: 200, body: { data: [], pagination: { total: 0 } } }
+      }),
+    })
+    await expect(client.searchDocuments('x', 5, undefined, { updatedAfter: '上周' })).rejects.toThrow(/不是可解析的时间/)
+    expect(calls).toBe(0)
+  })
+
+  it('不带 updatedAfter 的普通搜索不触发能力探测（零额外请求）', async () => {
+    let calls = 0
+    const client = new OutlineClient({
+      baseUrl: 'https://outline.example.com',
+      apiToken: 'tok',
+      fetchImpl: stubFetch(async () => {
+        calls += 1
+        return { status: 200, body: { data: [], pagination: { total: 0 } } }
+      }),
+    })
+    await client.searchDocuments('x', 5)
+    expect(calls).toBe(1)
   })
 
   it('searchDocuments 支持 collectionId 过滤并映射 parentDocumentId', async () => {

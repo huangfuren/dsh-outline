@@ -6,7 +6,47 @@ const DOCS = [
   { id: 'doc-3', title: '新员工入职指南', url: '/doc/onboarding', collectionId: 'col-2', authorId: 'user-1', updatedAt: '2026-03-01T00:00:00Z', text: '# 新员工入职指南\n\n欢迎加入！' },
 ]
 
-export function createMockOutlineServer() {
+/**
+ * 过滤器条件求值（模拟 Outline 1.12+ 的 filters 数组）。
+ * 只实现插件实际用到的字段与算子：collectionId / userId 的 eq、updatedAt 的 gte。
+ */
+function matchesCondition(doc, condition) {
+  const { field, operator, value } = condition
+  const compare = (left, right) => {
+    if (operator === 'eq') return left === right
+    if (operator === 'gte') return left >= right
+    if (operator === 'gt') return left > right
+    if (operator === 'lte') return left <= right
+    if (operator === 'lt') return left < right
+    return false
+  }
+  if (field === 'collectionId') return compare(doc.collectionId, value)
+  if (field === 'userId') return compare(doc.authorId, value)
+  if (field === 'updatedAt') {
+    const left = new Date(doc.updatedAt).getTime()
+    const raw = String(value)
+    // ISO 8601 duration（-P1D/-P1W/-P1M/-P1Y）表示相对当前时间的窗口，其余按绝对日期解析
+    const rel = raw.match(/^-P(\d+)([DWMY])$/)
+    if (rel) {
+      const n = Number(rel[1])
+      const unit = { D: 86400000, W: 7 * 86400000, M: 30 * 86400000, Y: 365 * 86400000 }[rel[2]]
+      return compare(left, Date.now() - n * unit)
+    }
+    const right = new Date(raw).getTime()
+    return Number.isFinite(right) ? compare(left, right) : false
+  }
+  return false
+}
+
+/** 旧参数与新 filters 互斥（Outline 1.12+ 的 refine：同时出现直接 400）。 */
+const LEGACY_FILTER_KEYS = ['collectionId', 'userId', 'documentId', 'dateFilter', 'statusFilter', 'parentDocumentId']
+
+/**
+ * @param {{ filters?: boolean }} options
+ *   `filters: false`（默认）模拟 Outline ≤ 1.11：未知的 `filters` 被静默丢弃，只认旧参数；
+ *   `filters: true` 模拟 Outline 1.12+：支持 filters 数组，且与旧参数互斥。
+ */
+export function createMockOutlineServer({ filters: supportsFilters = false } = {}) {
   return http.createServer((req, res) => {
     if (req.method !== 'POST') { res.writeHead(405); res.end('{"error":"method not allowed"}'); return }
     let body = ''
@@ -18,23 +58,35 @@ export function createMockOutlineServer() {
       let parsed = {}
       try { parsed = JSON.parse(body || '{}') } catch { /* ignore */ }
       const send = (status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)) }
+      const hasFilters = supportsFilters && Array.isArray(parsed.filters)
+      // 新版：filters 与旧参数同时出现 → 400（与真实 refine 一致）
+      if (hasFilters) {
+        const conflict = LEGACY_FILTER_KEYS.find((k) => parsed[k] !== undefined && parsed[k] !== null && parsed[k] !== '')
+        if (conflict !== undefined) {
+          send(400, { ok: false, error: 'Invalid input', message: `filters cannot be combined with deprecated parameters ${conflict}` })
+          return
+        }
+      }
+      /** 按实例能力套用过滤：新版走 filters，老版走旧参数（忽略 filters）。 */
+      const applyFilters = (docs) => {
+        if (hasFilters) return docs.filter((doc) => parsed.filters.every((c) => matchesCondition(doc, c)))
+        let out = docs
+        const collectionId = String(parsed.collectionId ?? '').trim()
+        const userId = String(parsed.userId ?? '').trim()
+        if (collectionId !== '') out = out.filter((doc) => doc.collectionId === collectionId)
+        if (userId !== '') out = out.filter((doc) => doc.authorId === userId)
+        return out
+      }
       if (req.url === '/api/documents.search') {
         const query = String(parsed.query ?? '').toLowerCase()
         const limit = Number(parsed.limit ?? 10)
         const offset = Number(parsed.offset ?? 0) || 0
-        const collectionId = String(parsed.collectionId ?? '').trim()
-        const userId = String(parsed.userId ?? '').trim()
-        const updatedAfter = String(parsed.updatedAfter ?? '').trim()
-        let matches = DOCS.filter((doc) => doc.title.toLowerCase().includes(query) || doc.text.toLowerCase().includes(query))
-        if (collectionId !== '') matches = matches.filter((doc) => doc.collectionId === collectionId)
-        if (userId !== '') matches = matches.filter((doc) => doc.authorId === userId)
-        if (updatedAfter !== '') {
-          const after = new Date(updatedAfter).getTime()
-          if (!Number.isNaN(after)) matches = matches.filter((doc) => new Date(doc.updatedAt).getTime() >= after)
-        }
-        const hits = matches.slice(offset, offset + limit)
+        // 注意：服务端从不存在 updatedAfter 参数（任何版本都没有），这里刻意不实现它 ——
+        // 早期 mock 自己实现了该过滤，导致"服务端不生效"的缺陷在冒烟里显示为通过。
+        const matched = applyFilters(DOCS.filter((doc) => doc.title.toLowerCase().includes(query) || doc.text.toLowerCase().includes(query)))
+        const hits = matched.slice(offset, offset + limit)
           .map((doc) => ({ context: doc.text.slice(0, 40), document: { id: doc.id, title: doc.title, url: doc.url, collectionId: doc.collectionId, updatedAt: doc.updatedAt, user: { id: doc.authorId } } }))
-        send(200, { data: hits, pagination: { total: matches.length } })
+        send(200, { data: hits, pagination: { total: matched.length } })
         return
       }
       if (req.url === '/api/documents.info') {
@@ -45,9 +97,10 @@ export function createMockOutlineServer() {
       }
       if (req.url === '/api/documents.list') {
         const limit = Number(parsed.limit ?? 10)
+        const matched = applyFilters(DOCS)
         send(200, {
-          data: DOCS.slice(0, limit).map((d) => ({ id: d.id, title: d.title, url: d.url, collectionId: d.collectionId, updatedAt: d.updatedAt })),
-          pagination: { total: DOCS.length },
+          data: matched.slice(0, limit).map((d) => ({ id: d.id, title: d.title, url: d.url, collectionId: d.collectionId, updatedAt: d.updatedAt })),
+          pagination: { total: matched.length },
         })
         return
       }
@@ -82,8 +135,10 @@ export function createMockOutlineServer() {
         const doc = DOCS.find((d) => d.id === parsed.id)
         if (!doc) { send(404, { ok: false, error: 'not_found' }); return }
         if (parsed.title !== undefined) doc.title = parsed.title
-        // append: true 走 Outline 原生追加语义（不覆盖原文）—— 用于验证长文改动路径
-        if (parsed.text !== undefined) doc.text = parsed.append === true ? doc.text + parsed.text : parsed.text
+        // 追加语义：v1.9+ 认 editMode，更早只认 append（真实服务端会把 append 转换后删除）。
+        // 两个都认，才能验证插件"双发"确实在两种版本下都不会退化成整篇覆盖。
+        const appending = parsed.editMode === 'append' || parsed.append === true
+        if (parsed.text !== undefined) doc.text = appending ? doc.text + parsed.text : parsed.text
         send(200, {
           data: {
             id: doc.id, title: doc.title, url: doc.url,
