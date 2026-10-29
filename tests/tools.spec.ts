@@ -498,6 +498,59 @@ describe('outline_search all=true 自动翻页', () => {
     expect(r.hits.map((h: any) => h.id)).toEqual(['a', 'b', 'c'])
     expect(r.total).toBe(3)
   })
+  it('client 模式（本地筛选）步长用服务端原始页长，不落回已抓区间', async () => {
+    const offsets: number[] = []
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async (_q, _l, _c, _f, offset = 0) => {
+        offsets.push(offset)
+        // 老实例不支持 filters：原始 25 条里本地按时间筛后只剩 2 条
+        const raw = Array.from({ length: 25 }, (_, i) => hit(`d${offset + i}`))
+        return { total: 1128, hits: raw.slice(0, 2), timeFilterMode: 'client' as const, scannedCount: 25 }
+      },
+    }), 10)
+    const r = await tool.execute({ query: 'x', all: true, updatedAfter: '2026-10-22' }, exec) as any
+    // 关键：步长必须是 25（服务端返回的原始条数），不能是 2（筛后条数）；
+    // 扫描窗口在 client 模式下放宽到 300（SEARCH_ALL_SCAN_MAX），返回条数仍受 100 约束
+    expect(offsets).toEqual([0, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275])
+    expect(r.timeFilterMode).toBe('client') // 状态必须透传，渲染层才知道要换文案
+    expect(r.scannedCount).toBe(300)
+  })
+
+  it('client 模式第一页被筛空仍继续翻页，不直接收工', async () => {
+    const offsets: number[] = []
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async (_q, _l, _c, _f, offset = 0) => {
+        offsets.push(offset)
+        const kept = offset === 0 ? [] : [hit(`d${offset}`)]
+        return { total: 1128, hits: kept, timeFilterMode: 'client' as const, scannedCount: 25 }
+      },
+    }), 10)
+    const r = await tool.execute({ query: 'x', all: true, updatedAfter: '2026-10-22' }, exec) as any
+    expect(offsets).toEqual([0, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275])
+    expect(r.hits).toHaveLength(11) // offset>0 的 11 页各 1 条
+  })
+
+  it('client 模式渲染：不把筛前总数说成待翻页结果', () => {
+    const tool = outlineSearchTool(() => fakeClient(), 10)
+    const text = (tool as any).output.render(
+      { query: 'x', updatedAfter: '2026-10-22' },
+      { total: 1128, hits: [hit('a')], timeFilterMode: 'client', scannedCount: 100 },
+    )[0].text as string
+    expect(text).toContain('扫描 100 篇候选')
+    expect(text).not.toContain('未显示') // 1128 是筛前总数，不能当「还有 N 篇」
+    expect(text).toContain('未按时间过滤')
+  })
+
+  it('client 模式渲染：筛后 0 条也不谎报「共匹配 N 篇」', () => {
+    const tool = outlineSearchTool(() => fakeClient(), 10)
+    const text = (tool as any).output.render(
+      {},
+      { total: 1128, hits: [], timeFilterMode: 'client', scannedCount: 100 },
+    )[0].text as string
+    expect(text).toContain('已扫描 100 篇候选')
+    expect(text).not.toContain('共匹配 1128')
+  })
+
   it('服务端无视 offset（整页重复）→ 不死循环', async () => {
     let call = 0
     const tool = outlineSearchTool(() => fakeClient({

@@ -5,7 +5,7 @@
 Security fixes are provided for the latest released pre-1.0 version only (`0.8.x`). Install an immutable Git tag and upgrade when a new release is published:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.3
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.9.0
 ```
 
 ## Reporting a vulnerability

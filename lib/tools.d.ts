@@ -2,6 +2,13 @@ import type { OutlineClient, OutlineSearchHit, OutlineDocument, OutlineCollectio
 export declare const SEARCH_MAX_LIMIT = 25;
 /** all=true 时自动翻页的总条数上限（防超大结果集撑爆上下文）。 */
 export declare const SEARCH_ALL_MAX = 100;
+/**
+ * all=true 且实例只能在本地按时间筛选（Outline 1.12 之前）时的**扫描**上限。
+ *
+ * 本地筛选会筛掉大部分候选，扫 100 篇往往只剩个位数命中；窗口放宽到 3 倍换取更多命中，
+ * 返回条数仍受 SEARCH_ALL_MAX 约束（上下文成本由命中数决定，不由扫描量决定）。
+ */
+export declare const SEARCH_ALL_SCAN_MAX = 300;
 /** all=true 翻页时同时在飞的请求数上限（前两页顺序探测，余下页面并发）。 */
 export declare const SEARCH_ALL_CONCURRENCY = 4;
 export declare const DOCUMENT_DEFAULT_MAX_LENGTH = 20000;

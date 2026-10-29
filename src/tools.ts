@@ -7,6 +7,13 @@ import type { OutlineClient, OutlineSearchResult, OutlineSearchHit, OutlineDocum
 export const SEARCH_MAX_LIMIT = 25
 /** all=true 时自动翻页的总条数上限（防超大结果集撑爆上下文）。 */
 export const SEARCH_ALL_MAX = 100
+/**
+ * all=true 且实例只能在本地按时间筛选（Outline 1.12 之前）时的**扫描**上限。
+ *
+ * 本地筛选会筛掉大部分候选，扫 100 篇往往只剩个位数命中；窗口放宽到 3 倍换取更多命中，
+ * 返回条数仍受 SEARCH_ALL_MAX 约束（上下文成本由命中数决定，不由扫描量决定）。
+ */
+export const SEARCH_ALL_SCAN_MAX = 300
 /** all=true 翻页时同时在飞的请求数上限（前两页顺序探测，余下页面并发）。 */
 export const SEARCH_ALL_CONCURRENCY = 4
 export const DOCUMENT_DEFAULT_MAX_LENGTH = 20000
@@ -75,19 +82,37 @@ export function synonymVariants(query: string, synonyms: Record<string, string[]
 // 入参用结构类型而非 OutlineSearchResult：output schema 里 timeFilterMode 声明为 string，
 // 与 client 侧的 'server' | 'client' 字面量联合不完全同构，这里只需按值比较，不必收窄。
 function renderSearchResults(
-  result: { total: number; hits: OutlineSearchHit[]; timeFilterMode?: string },
+  result: { total: number; hits: OutlineSearchHit[]; timeFilterMode?: string; scannedCount?: number },
   allMode = false,
 ): string {
-  const { total, hits, timeFilterMode } = result
+  const { total, hits, timeFilterMode, scannedCount } = result
   // 老实例没有服务端时间过滤：这一页是过滤前的结果，本地筛选后可能为空，
-  // 而 total 仍是过滤前总数。不说明的话用户会看到「匹配 N 篇却 0 条结果」。
+  // 而 total 仍是过滤前总数。
   const clientFiltered = timeFilterMode === 'client'
-  const clientNote = clientFiltered
-    ? '\n\n⚠️ 此实例不支持服务端时间过滤（Outline 1.12 之前的版本没有 filters 参数），已对取回的这一页按更新时间本地筛选；'
-      + 'total 是筛选前的总数。只取单页时结果可能不全：需要完整覆盖请用 all: true 翻页取全，本地筛选会逐页生效。'
-    : ''
+  const scanned = scannedCount ?? hits.length
+  const lines = hits.map((hit) => {
+    const meta = hit.snippet.length > 0 ? ` — ${hit.snippet}` : ''
+    const author = hit.authorName !== undefined && hit.authorName !== '' ? `（作者：${hit.authorName}）` : ''
+    return `- [${escapeLinkText(hit.title)}](${wrapUrl(hit.url)})${meta}（id: ${hit.id}）${author}`
+  })
+  const footer = '\n\n如需查看某篇全文，请使用 outline_get_document 工具（参数 id）。'
+
+  // 本地筛选分支单独渲染：total 是「时间过滤之前的全库匹配数」，拿它算「还有 N 篇未显示」
+  // 会把时间范围之外的文档说成待翻页结果（用户以为还能翻出更多近期文档，实际全是旧的）。
+  // 这里只报能确证的数字：实际扫描的候选量、命中的条数。
+  if (clientFiltered) {
+    const scope = allMode ? '（候选范围内尽量取全）' : '（单页）'
+    const note = '\n\n⚠️ 此实例不支持服务端时间过滤（Outline 1.12 之前没有 filters 参数），'
+      + `只能在已取回的候选里按更新时间本地筛选，命中可能不全；`
+      + `${total} 是该关键词的全库匹配数，未按时间过滤。要覆盖更全请去掉时间条件，或让管理员把 Outline 升级到 1.12+。`
+    if (hits.length === 0) {
+      return `已扫描 ${scanned} 篇候选${scope}，其中没有在指定时间之后更新的文档。` + note
+    }
+    return `已扫描 ${scanned} 篇候选${scope}，其中 ${hits.length} 篇在指定时间之后更新：\n${lines.join('\n')}${note}${footer}`
+  }
+
   if (hits.length === 0) {
-    return (total > 0 ? `该关键词共匹配 ${total} 篇文档，但未返回可展示的结果。` : '未找到匹配文档，可尝试更换关键词（如去掉停用词、改用更短的词）。') + clientNote
+    return (total > 0 ? `该关键词共匹配 ${total} 篇文档，但未返回可展示的结果。` : '未找到匹配文档，可尝试更换关键词（如去掉停用词、改用更短的词）。') + footer
   }
   const fetchedAll = allMode && hits.length >= total
   const head = fetchedAll
@@ -97,12 +122,7 @@ function renderSearchResults(
   const tail = (!fetchedAll && total > hits.length)
     ? `\n\n（还有 ${total - hits.length} 篇未显示。回复"查看下一页"或"全部"可让 AI 用 outline_search 的 offset / all 参数继续获取。）`
     : ''
-  const lines = hits.map((hit) => {
-    const meta = hit.snippet.length > 0 ? ` — ${hit.snippet}` : ''
-    const author = hit.authorName !== undefined && hit.authorName !== '' ? `（作者：${hit.authorName}）` : ''
-    return `- [${escapeLinkText(hit.title)}](${wrapUrl(hit.url)})${meta}（id: ${hit.id}）${author}`
-  })
-  return `${head}\n${lines.join('\n')}${tail}${clientNote}\n\n如需查看某篇全文，请使用 outline_get_document 工具（参数 id）。`
+  return `${head}\n${lines.join('\n')}${tail}${footer}`
 }
 
 function renderDocument(doc: OutlineDocument, truncated: boolean): string {
@@ -454,7 +474,8 @@ export function outlineSearchTool(
             },
           },
           retriedWith: { type: 'string', description: '原词零命中时实际生效的重试词（多词查询首词或同义词表变体）' },
-          timeFilterMode: { type: 'string', description: '时间过滤的生效位置：server = 服务端过滤（Outline 1.12+）；client = 实例不支持，已对当前页本地筛选，total 为筛选前总数' },
+          timeFilterMode: { type: 'string', description: '时间过滤的生效位置：server = 服务端过滤（Outline 1.12+）；client = 实例不支持，已对取回的候选本地筛选，total 为筛选前总数' },
+          scannedCount: { type: 'number', description: '本地筛选时实际扫描的候选条数（timeFilterMode=client 才有）；hits 已按时间筛过，本字段是筛前量' },
         },
       },
       render: (args, value) => [{
@@ -494,37 +515,63 @@ export function outlineSearchTool(
         const hits: OutlineSearchHit[] = []
         const seen = new Set<string>()
         let total = 0
+        /** 本实例的时间过滤生效位置；翻页过程中任一页给出就沿用（同一实例不会中途变）。 */
+        let mode: OutlineSearchResult['timeFilterMode']
+        /** 已向服务端扫描过的原始条数（本地筛选前）。翻页进度必须用它衡量：
+         *  client 模式下 hits 被筛过，用 hits 算会误判成「已经到底」。 */
+        let scanned = 0
         /** 吸收一页结果：返回该页新增（未见过）条数。 */
         const absorb = (r: OutlineSearchResult): number => {
           total = r.total
+          if (r.timeFilterMode !== undefined) mode = r.timeFilterMode
+          scanned += r.scannedCount ?? r.hits.length
           let fresh = 0
           for (const h of r.hits) {
             if (!seen.has(h.id)) { seen.add(h.id); hits.push(h); fresh += 1 }
           }
           return fresh
         }
-        const done = (): boolean => hits.length >= total || hits.length >= SEARCH_ALL_MAX
+        /** 统一的返回：把时间过滤状态一并带出，否则渲染层看不到 client 模式、会按
+         *  「筛前 total」算「还有多少篇未显示」。 */
+        const collect = (): OutlineSearchResult => ({
+          total,
+          hits: hits.slice(0, SEARCH_ALL_MAX),
+          ...(mode !== undefined ? { timeFilterMode: mode } : {}),
+          ...(mode === 'client' ? { scannedCount: scanned } : {}),
+        })
+        /** 本次允许扫描的候选上限：本地筛选会筛掉大量候选，窗口要放宽，否则命中被严重低估。 */
+        const scanCap = (): number => (mode === 'client' ? SEARCH_ALL_SCAN_MAX : SEARCH_ALL_MAX)
+        const done = (): boolean => scanned >= Math.min(total, scanCap()) || hits.length >= SEARCH_ALL_MAX
         // ① 一次抓满（limit 取「服务端上限」与「本工具总上限」的较小值）
         const want = Math.min(SEARCH_ALL_MAX, OUTLINE_MAX_PAGE_SIZE)
         const first = await client.searchDocuments(q, want, args.collectionId, filters, 0)
         absorb(first)
-        if (first.hits.length === 0 || done()) return { total, hits: hits.slice(0, SEARCH_ALL_MAX) }
+        // client 模式下 hits 为 0 只表示「这一页候选里没有满足时间条件的」，不代表后面也没有；
+        // 只有真没扫到任何候选（scanned=0）或已覆盖完目标窗口才收工。
+        if (scanned === 0 || done() || (first.hits.length === 0 && first.timeFilterMode !== 'client')) {
+          return collect()
+        }
         // ② 兜底：服务端把 limit 压小（短页）时，先顺序探测下一页确认 offset 真的生效
         //    （部分实例无视 offset 每次都返回同一页），确认后再并发补齐余下页面。
-        const step = first.hits.length
+        //    步长必须用服务端真实返回的条数：client 模式下 hits 已被本地筛少，
+        //    拿它当步长会让 offset 落回已抓区间，抓到的全是重复项后误判到底。
+        const step = first.scannedCount ?? first.hits.length
         const second = await client.searchDocuments(q, step, args.collectionId, filters, step)
-        if (second.hits.length === 0 || absorb(second) === 0 || done()) return { total, hits: hits.slice(0, SEARCH_ALL_MAX) }
+        const freshSecond = absorb(second)
+        // client 模式下一页被筛空（freshSecond=0）是正常现象，继续翻到 done() 为止；
+        // 服务端模式下 freshSecond=0 说明 offset 没生效（整页重复），必须立刻停，防死循环。
+        if (scanned === 0 || done() || (freshSecond === 0 && second.scannedCount === undefined)) {
+          return collect()
+        }
         const offsets: number[] = []
-        for (let off = step * 2; off < SEARCH_ALL_MAX && off < Math.min(total, SEARCH_ALL_MAX); off += step) offsets.push(off)
+        const cap = scanCap()
+        for (let off = step * 2; off < cap && off < Math.min(total, cap); off += step) offsets.push(off)
         if (offsets.length > 0) {
           const rest = await mapWithConcurrency(offsets, SEARCH_ALL_CONCURRENCY, (off) =>
             client.searchDocuments(q, step, args.collectionId, filters, off))
-          for (const r of rest) {
-            if (r.hits.length === 0) continue
-            absorb(r)
-          }
+          for (const r of rest) absorb(r)
         }
-        return { total, hits: hits.slice(0, SEARCH_ALL_MAX) }
+        return collect()
       }
       let result = await runQuery(args.query)
       let effectiveQuery = args.query

@@ -31,6 +31,14 @@ export interface OutlineSearchResult {
     retriedWith?: string;
     /** 仅在请求带 `updatedAfter` 时出现，说明时间过滤是服务端做的还是本地补的。 */
     timeFilterMode?: TimeFilterMode;
+    /**
+     * 本页服务端实际返回的条数（本地筛选前）。仅 `timeFilterMode === 'client'` 时出现。
+     *
+     * 必须与 `hits.length` 分开：client 模式下 hits 已被本地筛掉一部分，若拿它当页长，
+     * 下一页的 offset 会落回已抓区间 → 抓到的全是重复项 → 被「无新增」判据当成到底而提前退出
+     * （all=true 因此静默退化成「只取第一页」）。
+     */
+    scannedCount?: number;
 }
 export interface OutlineDocument {
     id: string;

@@ -4,7 +4,7 @@
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.8.3。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（215 个单元测试 + 端到端冒烟）。
+> 当前版本：0.9.0。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（219 个单元测试 + 端到端冒烟）。
 
 ## 功能
 
@@ -40,10 +40,10 @@ DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审
 从公开 GitHub 仓库安装，并固定到最新发布 tag：
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.8.3
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.9.0
 ```
 
-`#v0.8.3` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
+`#v0.9.0` 后缀固定到该发布版本；去掉后缀则跟随 `main` 分支最新提交。
 
 安装后重启 `dsh web`。发布包已经包含编译后的 `lib/`，正常从 Git 安装时不依赖用户本地构建。本包**不再包含任何安装生命周期脚本**：早期版本带的 `postinstall` 清理钩子会触发 pnpm 的构建脚本审批（`ERR_PNPM_IGNORED_BUILDS`），导致桌面版等新 surface 的安装被中断。
 

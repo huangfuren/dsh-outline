@@ -56,6 +56,14 @@ export interface OutlineSearchResult {
   retriedWith?: string
   /** 仅在请求带 `updatedAfter` 时出现，说明时间过滤是服务端做的还是本地补的。 */
   timeFilterMode?: TimeFilterMode
+  /**
+   * 本页服务端实际返回的条数（本地筛选前）。仅 `timeFilterMode === 'client'` 时出现。
+   *
+   * 必须与 `hits.length` 分开：client 模式下 hits 已被本地筛掉一部分，若拿它当页长，
+   * 下一页的 offset 会落回已抓区间 → 抓到的全是重复项 → 被「无新增」判据当成到底而提前退出
+   * （all=true 因此静默退化成「只取第一页」）。
+   */
+  scannedCount?: number
 }
 
 export interface OutlineDocument {
@@ -390,6 +398,9 @@ export class OutlineClient {
       total,
       hits,
       ...(timeFilterMode !== undefined ? { timeFilterMode } : {}),
+      // 只有本地筛选时 hits 会少于本页实际抓到的条数，此时必须把原始页长一并交出去，
+      // 供 all=true 的翻页逻辑算 offset（详见 scannedCount 字段注释）。
+      ...(timeFilterMode === 'client' ? { scannedCount: mapped.length } : {}),
     }
     this.searchCache.set(cacheKey, { expires: Date.now() + this.cacheTtlMs, result })
     if (this.searchCache.size > OutlineClient.SEARCH_CACHE_MAX_ENTRIES) {

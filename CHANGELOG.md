@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-10-29
+
+### Fixed — 老实例上 `all: true` 的时间过滤退化成「只取第一页」
+
+用真实老版本实例（42692 篇文档、`C1` 匹配 1128 篇）实测发现两个连锁缺陷，均只在
+`timeFilterMode=client`（Outline 1.12 之前）时触发：
+
+1. **翻页步长取错，`all: true` 静默失效**。第二页的 offset 取自 `first.hits.length`，
+   而本地筛选下这是**筛后**条数（实测 100 条候选只留 6 条）。于是第二页从 `offset=6` 开始抓、
+   与第一页完全重叠 → 新增命中恒为 0 → 撞上「无新增即到底」的保护而提前退出。
+   实测 `all: true` 只发出 2 次请求、返回 6 条，与单页无异。
+   - 修复：`OutlineSearchResult` 新增 `scannedCount`（本页服务端**原始**条数，仅 client 模式出现），
+     翻页步长与进度判断改用它；`client` 模式下扫描窗口放宽到 `SEARCH_ALL_SCAN_MAX`（300），
+     返回条数仍受 `SEARCH_ALL_MAX`（100）约束——上下文成本由命中数决定，不由扫描量决定。
+   - 顺带修掉：第一页筛空不再直接收工（筛空只说明这一页候选里没有，不代表后面没有）。
+2. **文案自相矛盾**。`total` 在本地筛选时是「筛前总数」，渲染层却拿它算「还有 N 篇未显示」。
+   实测界面写成「找到 3 篇（共匹配 1128 篇）… 还有 1125 篇未显示」，而那 1125 篇全在时间范围之外，
+   用户会以为还能翻出更多近期文档。
+   - 修复：client 模式改为「已扫描 X 篇候选，其中 Y 篇在指定时间之后更新」，并明确
+     `total` 是该关键词的全库匹配数、未按时间过滤；`all: true` 时状态同时透传（此前 `runQuery`
+     聚合后丢失 `timeFilterMode`，渲染层根本进不了 client 分支）。
+
+实测对照（`C1` + 近 7 天）：修复前命中 6 条、2 次请求后提前退出；修复后命中 12 条、扫描 300 篇候选。
+
 ### Added — Outline 新老版本兼容（v0.79 ~ v1.12+）
 
 按 Outline 服务端 schema 源码逐版本核对（v0.79 / v0.83 / v1.0 / v1.5 / v1.9 / v1.12 / main），
