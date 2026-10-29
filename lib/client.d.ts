@@ -21,8 +21,10 @@ export interface OutlineSearchHit {
  * - `server`：实例支持 `filters`（Outline 1.12+），过滤在服务端完成，total 与 hits 一致。
  * - `client`：实例不支持 `filters`，改为对已取回的这一页按 updatedAt 本地筛选；
  *   `total` 仍是服务端未过滤的总数，hits 可能少于 limit。
+ * - `list`：无关键词、只按时间取文档时走 `documents.list`（天然按 updatedAt 降序），
+ *   扫到时间边界即停 —— 精确且不受相关度排序影响，比 `client` 可靠。
  */
-export type TimeFilterMode = 'server' | 'client';
+export type TimeFilterMode = 'server' | 'client' | 'list';
 /** 搜索结果：命中列表 + 该关键词在知识库中的匹配总数（pagination.total）。 */
 export interface OutlineSearchResult {
     total: number;
@@ -39,6 +41,12 @@ export interface OutlineSearchResult {
      * （all=true 因此静默退化成「只取第一页」）。
      */
     scannedCount?: number;
+    /**
+     * 结果是否因达到 limit / 扫描上限而被截断（仍有更多符合条件的文档没取）。
+     * 仅 `timeFilterMode === 'list'` 时有意义 —— 该路径下 hits 就是「全部命中的前 N 条」，
+     * 与 `total`（库中总文档数）不是同一个概念。
+     */
+    truncated?: boolean;
 }
 export interface OutlineDocument {
     id: string;
@@ -142,6 +150,30 @@ export declare class OutlineClient {
         userId?: string;
         updatedAfter?: string;
     }, offset?: number): Promise<OutlineSearchResult>;
+    /**
+     * 按更新时间倒序分页拉取文档，**不做关键词检索**。
+     *
+     * 用途：老实例（Outline 1.12 之前）没有 `filters`，`documents.search` 又按相关度排序，
+     * 拿它 + 本地筛选去回答「最近更新了什么」只能覆盖候选里的一小部分（实测 300/42714）。
+     * 而 `documents.list` 在 v0.79 ~ main 上**默认就按 `updatedAt` 降序**（与显式
+     * `sort: 'updatedAt', direction: 'DESC'` 结果一致）、`offset` 分页正常、支持 `collectionId`。
+     * 因此顺着它往下扫，遇到早于 `updatedAfter` 的文档即可停 —— 结果精确且请求数最小。
+     *
+     * `truncated` 为 true 表示还有更多符合条件的文档没取（达到 limit 或扫描上限），
+     * 调用方据此说明结果是「完整」还是「被截断」，不能反过来说成完整。
+     */
+    listRecentDocuments(options: {
+        limit: number;
+        offset?: number;
+        updatedAfter?: string;
+        collectionId?: string;
+        userId?: string;
+    }): Promise<{
+        total: number;
+        hits: OutlineSearchHit[];
+        truncated: boolean;
+        scanned: number;
+    }>;
     /** 写操作后失效搜索缓存（结果可能随增删改变化）。 */
     private invalidateCaches;
     /** 统计 Outline 知识库文档总数（documents.list 分页 total；不含已删除/回收站文档）。 */

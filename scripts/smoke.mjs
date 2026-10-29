@@ -100,10 +100,13 @@ try {
   // 验证 userId 过滤（mock server 已支持）
   const byUser = await byName.outline_search.execute({ query: '', limit: 10, userId: 'user-2' }, exec)
   check('outline_search userId 过滤', byUser.hits.length >= 1, `got ${byUser.hits.length} hits`)
-  // 老实例（默认 mock 模拟 Outline ≤ 1.11）：服务端没有时间过滤能力，
-  // 插件必须本地筛选并如实标注，而不是假装服务端已过滤。
+  // 空关键词 + 时间条件：走 documents.list（服务端天然按 updatedAt 降序），扫到边界即停。
   const recent = await byName.outline_search.execute({ query: '', limit: 10, updatedAfter: '2026-03-01' }, exec)
-  check('outline_search updatedAfter 在老实例本地筛选并标注', recent.hits.length >= 1 && recent.timeFilterMode === 'client', `got ${recent.hits.length} hits, mode=${recent.timeFilterMode}`)
+  check('outline_search 空关键词走 list 路径并标注', recent.hits.length >= 1 && recent.timeFilterMode === 'list', `got ${recent.hits.length} hits, mode=${recent.timeFilterMode}`)
+  check('outline_search list 路径只返回时间范围内的文档', recent.hits.every((h) => h.updatedAt >= '2026-03-01'), JSON.stringify(recent.hits.map((h) => h.updatedAt)))
+  // 有关键词时仍走关键词检索：老实例服务端没有时间过滤，必须本地筛选并如实标注。
+  const kwRecent = await byName.outline_search.execute({ query: '部署', limit: 10, updatedAfter: '2026-01-01' }, exec)
+  check('outline_search 有关键词时老实例本地筛选并标注', kwRecent.hits.length >= 1 && kwRecent.timeFilterMode === 'client', `got ${kwRecent.hits.length} hits, mode=${kwRecent.timeFilterMode}`)
   // 验证 snippet 保留原始 HTML 高亮标签
   const searchWithHtml = await byName.outline_search.execute({ query: '部署', limit: 1 }, exec)
   check('outline_search snippet 保留原始上下文', searchWithHtml.hits[0] && typeof searchWithHtml.hits[0].snippet === 'string', JSON.stringify(searchWithHtml))

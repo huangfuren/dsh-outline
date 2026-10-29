@@ -82,8 +82,9 @@ export function synonymVariants(query: string, synonyms: Record<string, string[]
 // 入参用结构类型而非 OutlineSearchResult：output schema 里 timeFilterMode 声明为 string，
 // 与 client 侧的 'server' | 'client' 字面量联合不完全同构，这里只需按值比较，不必收窄。
 function renderSearchResults(
-  result: { total: number; hits: OutlineSearchHit[]; timeFilterMode?: string; scannedCount?: number },
+  result: { total: number; hits: OutlineSearchHit[]; timeFilterMode?: string; scannedCount?: number; truncated?: boolean },
   allMode = false,
+  updatedAfter?: string,
 ): string {
   const { total, hits, timeFilterMode, scannedCount } = result
   // 老实例没有服务端时间过滤：这一页是过滤前的结果，本地筛选后可能为空，
@@ -96,6 +97,29 @@ function renderSearchResults(
     return `- [${escapeLinkText(hit.title)}](${wrapUrl(hit.url)})${meta}（id: ${hit.id}）${author}`
   })
   const footer = '\n\n如需查看某篇全文，请使用 outline_get_document 工具（参数 id）。'
+
+  // 无关键词、按更新时间倒序取数：hits 就是「全部命中的前 N 条」，total 是库里（该集合/作者下的）
+  // 文档总数——两者不是同一概念，不能拿 total 说「还有多少篇未显示」。
+  if (timeFilterMode === 'list') {
+    const { truncated } = result
+    const hasTime = updatedAfter !== undefined && updatedAfter !== ''
+    if (hits.length === 0) {
+      return hasTime
+        ? '在指定时间之后没有更新的文档（已按更新时间倒序检查，结果完整）。'
+        : '库中暂无文档。'
+    }
+    const scope = truncated
+      ? (hasTime
+        ? `（达到单次上限，还有更早的符合条件的文档；继续取下一批请传 offset=${hits.length}）`
+        : `（库中共 ${total} 篇，仅列出最近的 ${hits.length} 篇；继续取请传 offset=${hits.length}）`)
+      : (hasTime ? '（已覆盖全部符合条件的文档）' : '（库中全部文档）')
+    // 截断时不能写「共 N 篇」——那会被读成「一共就这么多」。
+    const prefix = truncated ? '本次取到' : '共'
+    const head = hasTime
+      ? `按更新时间倒序，${prefix} ${hits.length} 篇在指定时间之后更新${scope}：`
+      : `按更新时间倒序，${prefix} ${hits.length} 篇${scope}：`
+    return `${head}\n${lines.join('\n')}${footer}`
+  }
 
   // 本地筛选分支单独渲染：total 是「时间过滤之前的全库匹配数」，拿它算「还有 N 篇未显示」
   // 会把时间范围之外的文档说成待翻页结果（用户以为还能翻出更多近期文档，实际全是旧的）。
@@ -440,12 +464,12 @@ export function outlineSearchTool(
     name: 'outline_search',
     description: '在 Outline 知识库中按关键词搜索文档，返回该关键词的匹配总数、标题、命中片段、文档 id 与链接。可选按集合/作者/更新时间过滤。配置好 token 后即可检索全部文档。',
     parameters: {
-      query: { type: 'string', required: true, description: '搜索关键词' },
+      query: { type: 'string', required: true, description: '搜索关键词。**传空字符串表示不做关键词检索**：此时按更新时间倒序取文档，配合 updatedAfter 可精确回答「最近更新了什么」' },
       limit: { type: 'integer', description: `返回结果条数（默认 ${defaultLimit}，最大 ${SEARCH_MAX_LIMIT}）` },
       collectionId: { type: 'string', description: '可选，限定搜索某个集合（用 outline_list_collections 获取 id）' },
       author: { type: 'string', description: '可选，按作者过滤：姓名或邮箱（先精确后模糊匹配；匹配到多人时返回候选列表，请换 outline_list_users 查 id）' },
       userId: { type: 'string', description: '可选，按作者过滤（用户 id，精确值；可先用 outline_list_users 查询）' },
-      updatedAfter: { type: 'string', description: '可选，只返回此时间之后更新的文档（ISO 日期或时间，如 2026-08-01）。Outline 1.12+ 在服务端过滤；更早版本无此能力，改为对取回的那一页本地筛选（返回 timeFilterMode=client 提示）' },
+      updatedAfter: { type: 'string', description: '可选，只返回此时间之后更新的文档（ISO 日期或时间，如 2026-08-01）。无关键词时走 documents.list 降序扫描、结果精确；有关键词时 Outline 1.12+ 在服务端过滤，更早版本对取回的候选本地筛选（timeFilterMode=client，覆盖有限）' },
       offset: { type: 'integer', description: '可选，跳过前 N 条结果（配合 limit 翻页查看更多，默认 0）' },
       all: { type: 'boolean', description: '可选，true = 自动翻页抓取该关键词的全部匹配（上限 100 篇，跨页去重）；适合"列全所有相关文档"类需求' },
     },
@@ -474,15 +498,16 @@ export function outlineSearchTool(
             },
           },
           retriedWith: { type: 'string', description: '原词零命中时实际生效的重试词（多词查询首词或同义词表变体）' },
-          timeFilterMode: { type: 'string', description: '时间过滤的生效位置：server = 服务端过滤（Outline 1.12+）；client = 实例不支持，已对取回的候选本地筛选，total 为筛选前总数' },
+          timeFilterMode: { type: 'string', description: '时间过滤的生效位置：list = 无关键词时按更新时间倒序从 documents.list 取（精确）；server = 服务端过滤（Outline 1.12+）；client = 实例不支持 filters，仅对取回的候选本地筛选，total 为筛选前总数' },
           scannedCount: { type: 'number', description: '本地筛选时实际扫描的候选条数（timeFilterMode=client 才有）；hits 已按时间筛过，本字段是筛前量' },
+          truncated: { type: 'boolean', description: '仅 timeFilterMode=list：true 表示达到单次上限、可能还有更多符合条件的文档未列出；false 表示已覆盖全部' },
         },
       },
       render: (args, value) => [{
         type: 'text',
         text:
           (value.retriedWith !== undefined ? `（原查询无结果，已用 "${value.retriedWith}" 重试命中）\n` : '')
-          + renderSearchResults(value, args.all === true)
+          + renderSearchResults(value, args.all === true, args.updatedAfter)
           + (getSaveDir !== undefined ? renderLocalSaveHint(getSaveDir(), 'search') : ''),
       }],
     },
@@ -504,6 +529,26 @@ export function outlineSearchTool(
         }
       }
       const filters = { userId: resolvedUserId, updatedAfter: args.updatedAfter }
+
+      // 无关键词 + 要按时间取文档：改走 documents.list（天然按 updatedAt 降序）。
+      // 老实例（<1.12）上 documents.search 按相关度排序，扫 300 条候选只能覆盖全库的 0.7%
+      // （实测 300/42714），模型会被迫自己逐集合补扫；而 list 降序扫到时间边界即停，结果精确。
+      if (args.query.trim() === '') {
+        const listed = await client.listRecentDocuments({
+          limit: args.all === true ? SEARCH_ALL_MAX : limit,
+          offset,
+          updatedAfter: args.updatedAfter,
+          collectionId: args.collectionId,
+          userId: resolvedUserId,
+        })
+        return {
+          total: listed.total,
+          hits: listed.hits,
+          timeFilterMode: 'list' as const,
+          scannedCount: listed.scanned,
+          truncated: listed.truncated,
+        }
+      }
       /** 执行一次查询：默认单页；all=true 时抓全（上限 SEARCH_ALL_MAX，跨页按 id 去重）。
        *  抓取策略：① 按服务端单页上限（100）一次抓满 —— 同一实例实测比 4×limit25 串行快约 30%，
        *  且服务端只跑一次检索；返回集合与顺序与逐页串行完全一致。

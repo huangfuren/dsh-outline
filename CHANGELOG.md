@@ -6,6 +6,30 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [v0.9.0] - 2026-10-29
 
+### Added — 无关键词的时间检索改走 `documents.list`（精确，不再靠相关度猜）
+
+上一轮修复后仍有一处语义缺口：空关键词 + `updatedAfter` 走的是 `documents.search`，而它按
+**相关度**排序。实测扫 300 条候选只覆盖全库 0.7%（300/42714），拿到「300 篇候选里 94 篇是今天的」
+之后，模型自己判断不可靠、转而逐集合补扫 —— 等于插件没把活干完。
+
+在同一实例上实测确认了三件事：
+
+| 探测项 | 结果 |
+| --- | --- |
+| `documents.list` 是否支持按更新时间排序 | **默认就是 `updatedAt` 降序**，与显式 `sort: 'updatedAt', direction: 'DESC'` 完全一致 |
+| `offset` 分页 | 生效，相邻两页严格衔接、无重叠 |
+| `sort` + `collectionId` | 兼容，同样降序 |
+
+因此新增路径：**关键词为空时走 `documents.list` 降序扫描，遇到早于 `updatedAfter` 的文档即停**。
+结果精确、请求数最小（实测一次请求取 100 条），不再受相关度排序影响。
+
+- 返回新增 `timeFilterMode: 'list'`：表示这批结果按更新时间倒序取自 `documents.list`，不是关键词检索。
+- 返回新增 `truncated`：为 `true` 表示达到单次上限、还有更早的符合条件的文档；渲染时给出可直接续取的
+  `offset` 值，**不谎称「已取全」**；为 `false` 才表示已扫到时间边界/库末尾。
+- 有关键词时仍走 `search`（相关度优先），其本地筛选的局限说明保留。
+- `truncated` 的判定专门区分了「页内被 limit 截住」与「刚好读完最后一页」两种情况 —— 后者
+  `offset` 会恰好等于 `total`，若据此判完整会把截断误报成完整。
+
 ### Fixed — 老实例上 `all: true` 的时间过滤退化成「只取第一页」
 
 用真实老版本实例（42692 篇文档、`C1` 匹配 1128 篇）实测发现两个连锁缺陷，均只在

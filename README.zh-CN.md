@@ -4,7 +4,7 @@
 
 DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审批后创建、更新或删除文档。插件只连接用户配置的 Outline 实例，不携带任何组织内部地址、token、集合名或文档内容。
 
-> 当前版本：0.9.0。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（219 个单元测试 + 端到端冒烟）。
+> 当前版本：0.9.0。支持的 DeepSeek Harness 基线为 `0.1.5-rc.2`（设置卡片依赖 `settings.installSection`），Node.js 需要 22.19 或更高版本；原生支持 Windows / macOS / Linux 三大平台，经过全量跨平台兼容性测试（228 个单元测试 + 端到端冒烟）。
 
 ## 功能
 
@@ -30,7 +30,7 @@ DeepSeek Harness 的 Outline 插件：在对话中搜索、读取并在用户审
 具体处理方式：
 
 - **追加同时发两个键**：带 `append: true` 时，请求体同时含 `append: true` 与 `editMode: "append"`。老版本丢弃 `editMode` 用 `append`；新版本把 `append` 转成 `editMode` 后删除。只发其中一个，会在另一侧**静默退化成整篇覆盖**——不报错、正文被替换，所以两个都发。
-- **时间过滤按实例探测一次**：用一次「未来时间点」的 `documents.list` 判断实例是否认 `filters`（返回空 = 认，返回真实总数 = 字段被丢弃）。认的实例把过滤下推到服务端并返回 `timeFilterMode: "server"`；不认的实例对取回的那一页本地筛选并返回 `timeFilterMode: "client"`。老版本服务端**根本没有** `updatedAfter` 这个参数——它在任何 Outline 版本里都不存在，没有可发的东西。
+- **时间过滤按实例探测一次**：用一次「未来时间点」的 `documents.list` 判断实例是否认 `filters`（返回空 = 认，返回真实总数 = 字段被丢弃）。认的实例把过滤下推到服务端并返回 `timeFilterMode: "server"`；不认的实例对取回的那一页本地筛选并返回 `timeFilterMode: "client"`；**关键词为空时**改走 `documents.list`（天然按 `updatedAt` 降序）扫到时间边界即停，返回 `timeFilterMode: "list"`，结果精确且只需一次请求。老版本服务端**根本没有** `updatedAfter` 这个参数——它在任何 Outline 版本里都不存在，没有可发的东西。
 - **集合 / 作者过滤继续用顶层参数**，各版本都接受。1.12+ 标了弃用但没移除；只有同时要求时间过滤时才走 `filters` 路径，因为服务端拒绝两者并存。
 
 ## 安装
@@ -130,7 +130,7 @@ dsh plugin --profile <profile> why dsh-outline
 ## 兼容性与发布检查
 
 - 使用 DSH `0.1.5-rc.2` 或更高的同一兼容范围测试；更早版本既没有 `settings.installSection`，也没有客户端注入兼容保证。
-- 执行 `pnpm typecheck`、`pnpm build`、`pnpm test`（152 个单元测试，包含跨平台边界用例）和 `node scripts/smoke.mjs`（端到端集成测试）。
+- 执行 `pnpm typecheck`、`pnpm build`、`pnpm test`（228 个单元测试，包含跨平台边界用例）和 `node scripts/smoke.mjs`（端到端集成测试）。
 - 压缩包排除 `node_modules`、`.git`、settings 文件、token、内部地址和内部文档名称。
 - 在干净的 `web` profile 中安装 GitHub 地址或压缩包，确认插件列表和插件配置两个入口都可见。
 - 发布前搜索整个发布目录中的组织专属名称；检查失败就停止发布。
@@ -138,6 +138,15 @@ dsh plugin --profile <profile> why dsh-outline
 ## 工具
 
 `outline_search`、`outline_context_search`、`outline_get_document`、`outline_count`、`outline_list_collections`、`outline_list_users`、`outline_resolve_path`、`outline_list_children`、`outline_doc_template`、`outline_save_local`、`outline_create`、`outline_update_document` 和 `outline_delete`。
+
+### 按时间检索（最近更新了什么）
+
+- 问「今天/本周更新了哪些文档」时，给 `outline_search` 传 **空字符串 query** + `updatedAfter`：
+  插件改走 `documents.list`（天然按 `updatedAt` 降序）扫到时间边界即停，结果**精确**且通常一次请求完成。
+- 空 query 时返回 `timeFilterMode: "list"`；`truncated: true` 表示达到单次上限还有更早文档，
+  按提示传 `offset` 续取即可。
+- 带关键词时仍走关键词检索（相关度优先），此时的时间过滤在 Outline 1.12+ 下推服务端，
+  更老的版本只能对取回的候选本地筛选（`timeFilterMode: "client"`，覆盖有限）。
 
 ### 作者过滤（outline_list_users + outline_search 的 author）
 

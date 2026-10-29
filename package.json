@@ -68,7 +68,7 @@
         "typecheck": "tsc --noEmit",
         "test": "vitest run",
         "smoke": "node scripts/smoke.mjs",
-        "verify": "pnpm typecheck && pnpm test && node scripts/smoke.mjs",
+        "verify": "pnpm typecheck && pnpm build && pnpm test && node scripts/smoke.mjs",
         "prepack": "pnpm build"
     },
     "dependencies": {

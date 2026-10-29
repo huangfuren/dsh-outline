@@ -875,3 +875,94 @@ describe('OutlineClient', () => {
     expect(maxInFlight).toBeLessThanOrEqual(3)
   })
 })
+
+
+describe('listRecentDocuments（按更新时间降序取数）', () => {
+  const mk = (handler: (url: string, init: RequestInit) => Promise<StubResponse>) =>
+    new OutlineClient({ baseUrl: 'https://outline.example.com/', apiToken: 'tok', fetchImpl: stubFetch(handler) })
+
+  it('降序扫描，遇到早于 updatedAfter 的文档即停，并标记结果完整', async () => {
+    let calls = 0
+    const client = mk(async () => {
+      calls += 1
+      return {
+        status: 200,
+        body: {
+          data: [
+            { id: 'a', title: 'A', url: '/a', updatedAt: '2026-10-29T08:00:00Z' },
+            { id: 'b', title: 'B', url: '/b', updatedAt: '2026-10-28T08:00:00Z' },
+            { id: 'c', title: 'C', url: '/c', updatedAt: '2026-10-01T08:00:00Z' },
+          ],
+          pagination: { total: 3 },
+        },
+      }
+    })
+    const r = await client.listRecentDocuments({ limit: 10, updatedAfter: '2026-10-22T00:00:00Z' })
+    expect(r.hits.map((h) => h.id)).toEqual(['a', 'b'])
+    expect(r.truncated).toBe(false) // 已扫到时间边界，结果完整
+    expect(calls).toBe(1)
+  })
+
+  it('达到 limit 即停并标记 truncated（不谎称完整）', async () => {
+    const client = mk(async () => ({
+      status: 200,
+      body: {
+        data: [
+          { id: 'a', title: 'A', url: '/a', updatedAt: '2026-10-29T08:00:00Z' },
+          { id: 'b', title: 'B', url: '/b', updatedAt: '2026-10-28T08:00:00Z' },
+          { id: 'c', title: 'C', url: '/c', updatedAt: '2026-10-27T08:00:00Z' },
+        ],
+        pagination: { total: 3 },
+      },
+    }))
+    const r = await client.listRecentDocuments({ limit: 2, updatedAfter: '2026-10-22T00:00:00Z' })
+    expect(r.hits).toHaveLength(2)
+    expect(r.truncated).toBe(true)
+  })
+
+  it('请求显式带 sort/direction，并按 offset 翻页', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const client = mk(async (_url, init) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      bodies.push(body)
+      const offset = Number(body.offset ?? 0)
+      return {
+        status: 200,
+        body: {
+          data: offset === 0
+            ? [{ id: 'a', title: 'A', url: '/a', updatedAt: '2026-10-29T00:00:00Z' }]
+            : [{ id: 'b', title: 'B', url: '/b', updatedAt: '2026-10-28T00:00:00Z' }],
+          pagination: { total: 2 },
+        },
+      }
+    })
+    const r = await client.listRecentDocuments({ limit: 2, updatedAfter: '2026-10-22T00:00:00Z' })
+    expect(r.hits.map((h) => h.id)).toEqual(['a', 'b'])
+    expect(bodies[0]!.sort).toBe('updatedAt')
+    expect(bodies[0]!.direction).toBe('DESC')
+    expect(bodies[1]!.offset).toBe(1)
+    expect(r.truncated).toBe(false)
+  })
+
+  it('空页视为到底', async () => {
+    const client = mk(async () => ({ status: 200, body: { data: [], pagination: { total: 0 } } }))
+    const r = await client.listRecentDocuments({ limit: 5, updatedAfter: '2026-10-22T00:00:00Z' })
+    expect(r.hits).toEqual([])
+    expect(r.truncated).toBe(false)
+  })
+
+  it('updatedAfter 不可解析时抛错，不静默放行', async () => {
+    const client = mk(async () => ({ status: 200, body: { data: [], pagination: {} } }))
+    await expect(client.listRecentDocuments({ limit: 5, updatedAfter: '昨天' })).rejects.toThrow(/不是可解析的时间/)
+  })
+
+  it('不传 updatedAfter 时正常取最近文档，不因哨兵值报错', async () => {
+    const client = mk(async () => ({
+      status: 200,
+      body: { data: [{ id: 'a', title: 'A', url: '/a', updatedAt: '2026-10-29T00:00:00Z' }], pagination: { total: 1 } },
+    }))
+    const r = await client.listRecentDocuments({ limit: 5 })
+    expect(r.hits.map((h) => h.id)).toEqual(['a'])
+    expect(r.truncated).toBe(false)
+  })
+})

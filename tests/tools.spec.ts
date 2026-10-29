@@ -1130,3 +1130,53 @@ describe('写工具对未知参数的 fail-closed 行为（回归：静默成功
     expect(called).toBe(false)
   })
 })
+
+describe('outline_search 空关键词走 list 路径（按更新时间倒序）', () => {
+  const hit = (id: string) => ({ id, title: id, url: '/d', snippet: '', collectionId: '', updatedAt: '2026-10-29T00:00:00Z' })
+
+  it('空 query + updatedAfter → 走 listRecentDocuments，不触发关键词检索', async () => {
+    let searched = 0
+    let listed = 0
+    const tool = outlineSearchTool(() => fakeClient({
+      searchDocuments: async () => { searched += 1; return { total: 0, hits: [] } },
+      listRecentDocuments: async () => {
+        listed += 1
+        return { total: 42714, hits: [hit('a')], truncated: false, scanned: 100 }
+      },
+    }), 10)
+    const r = await tool.execute({ query: '   ', updatedAfter: '2026-10-29' }, exec) as any
+    expect(listed).toBe(1)
+    expect(searched).toBe(0)
+    expect(r.timeFilterMode).toBe('list')
+    expect(r.hits).toHaveLength(1)
+  })
+
+  it('有关键词时不走 list 路径', async () => {
+    let listed = 0
+    const tool = outlineSearchTool(() => fakeClient({
+      listRecentDocuments: async () => { listed += 1; return { total: 0, hits: [], truncated: false, scanned: 0 } },
+    }), 10)
+    await tool.execute({ query: '部署', updatedAfter: '2026-10-29' }, exec)
+    expect(listed).toBe(0)
+  })
+
+  it('渲染：完整时说明已覆盖全部，不出现「还有 N 篇未显示」', () => {
+    const tool = outlineSearchTool(() => fakeClient(), 10)
+    const text = (tool as any).output.render(
+      { query: '', updatedAfter: '2026-10-29' },
+      { total: 42714, hits: [hit('a')], timeFilterMode: 'list', truncated: false },
+    )[0].text as string
+    expect(text).toContain('已覆盖全部符合条件的文档')
+    expect(text).not.toContain('未显示')
+    expect(text).not.toContain('42714')
+  })
+
+  it('渲染：截断时明确提示可能还有更多', () => {
+    const tool = outlineSearchTool(() => fakeClient(), 10)
+    const text = (tool as any).output.render(
+      { query: '', updatedAfter: '2026-10-29' },
+      { total: 42714, hits: [hit('a')], timeFilterMode: 'list', truncated: true },
+    )[0].text as string
+    expect(text).toContain('offset=1')
+  })
+})

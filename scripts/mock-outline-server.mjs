@@ -97,9 +97,14 @@ export function createMockOutlineServer({ filters: supportsFilters = false } = {
       }
       if (req.url === '/api/documents.list') {
         const limit = Number(parsed.limit ?? 10)
+        const offset = Number(parsed.offset ?? 0)
+        // 真实 Outline（v0.79 ~ main）的 documents.list 默认按 updatedAt 降序返回，并支持 offset 翻页。
+        // mock 必须照做，否则「空关键词按时间取文档」这条路径测出来的是假结果。
         const matched = applyFilters(DOCS)
+          .slice()
+          .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
         send(200, {
-          data: matched.slice(0, limit).map((d) => ({ id: d.id, title: d.title, url: d.url, collectionId: d.collectionId, updatedAt: d.updatedAt })),
+          data: matched.slice(offset, offset + limit).map((d) => ({ id: d.id, title: d.title, url: d.url, collectionId: d.collectionId, updatedAt: d.updatedAt })),
           pagination: { total: matched.length },
         })
         return

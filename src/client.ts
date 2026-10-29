@@ -45,8 +45,10 @@ export interface OutlineSearchHit {
  * - `server`：实例支持 `filters`（Outline 1.12+），过滤在服务端完成，total 与 hits 一致。
  * - `client`：实例不支持 `filters`，改为对已取回的这一页按 updatedAt 本地筛选；
  *   `total` 仍是服务端未过滤的总数，hits 可能少于 limit。
+ * - `list`：无关键词、只按时间取文档时走 `documents.list`（天然按 updatedAt 降序），
+ *   扫到时间边界即停 —— 精确且不受相关度排序影响，比 `client` 可靠。
  */
-export type TimeFilterMode = 'server' | 'client'
+export type TimeFilterMode = 'server' | 'client' | 'list'
 
 /** 搜索结果：命中列表 + 该关键词在知识库中的匹配总数（pagination.total）。 */
 export interface OutlineSearchResult {
@@ -64,6 +66,12 @@ export interface OutlineSearchResult {
    * （all=true 因此静默退化成「只取第一页」）。
    */
   scannedCount?: number
+  /**
+   * 结果是否因达到 limit / 扫描上限而被截断（仍有更多符合条件的文档没取）。
+   * 仅 `timeFilterMode === 'list'` 时有意义 —— 该路径下 hits 就是「全部命中的前 N 条」，
+   * 与 `total`（库中总文档数）不是同一个概念。
+   */
+  truncated?: boolean
 }
 
 export interface OutlineDocument {
@@ -408,6 +416,93 @@ export class OutlineClient {
       if (oldest !== undefined) this.searchCache.delete(oldest)
     }
     return result
+  }
+
+  /**
+   * 按更新时间倒序分页拉取文档，**不做关键词检索**。
+   *
+   * 用途：老实例（Outline 1.12 之前）没有 `filters`，`documents.search` 又按相关度排序，
+   * 拿它 + 本地筛选去回答「最近更新了什么」只能覆盖候选里的一小部分（实测 300/42714）。
+   * 而 `documents.list` 在 v0.79 ~ main 上**默认就按 `updatedAt` 降序**（与显式
+   * `sort: 'updatedAt', direction: 'DESC'` 结果一致）、`offset` 分页正常、支持 `collectionId`。
+   * 因此顺着它往下扫，遇到早于 `updatedAfter` 的文档即可停 —— 结果精确且请求数最小。
+   *
+   * `truncated` 为 true 表示还有更多符合条件的文档没取（达到 limit 或扫描上限），
+   * 调用方据此说明结果是「完整」还是「被截断」，不能反过来说成完整。
+   */
+  async listRecentDocuments(options: {
+    limit: number
+    offset?: number
+    updatedAfter?: string
+    collectionId?: string
+    userId?: string
+  }): Promise<{ total: number; hits: OutlineSearchHit[]; truncated: boolean; scanned: number }> {
+    const pageSize = OutlineClient.MAX_PAGE_SIZE
+    const afterRaw = options.updatedAfter
+    const hasAfter = afterRaw !== undefined && afterRaw !== ''
+    // 无时间条件时用 -Infinity 作哨兵（任何 updatedAt 都 >= 它，等价于不过滤），
+    // 注意不能用 Number.isFinite 校验它 —— -Infinity 不是 finite。
+    const after = hasAfter ? Date.parse(String(afterRaw)) : Number.NEGATIVE_INFINITY
+    if (hasAfter && !Number.isFinite(after)) {
+      throw new Error(`updatedAfter 不是可解析的时间："${afterRaw}"。请用 ISO 日期（2026-08-01）或 ISO 时间（2026-08-01T00:00:00Z）。`)
+    }
+    const target = Math.max(1, options.limit)
+    const hits: OutlineSearchHit[] = []
+    let offset = Math.max(0, options.offset ?? 0)
+    let scanned = 0
+    let total = 0
+    /** 是否已确认覆盖全部符合条件的文档（扫到时间边界 / 全库末尾 / 空页）。 */
+    let complete = false
+    let guard = 0
+    const MAX_SCAN = (target > 100 ? target * 2 : 200) // 防实例无视 offset 时死循环
+
+    while (hits.length < target) {
+      guard += 1
+      if (guard > 20 || scanned >= MAX_SCAN) break
+      const body: Record<string, unknown> = { limit: pageSize, offset, sort: 'updatedAt', direction: 'DESC' }
+      if (options.collectionId !== undefined && options.collectionId !== '') body.collectionId = options.collectionId
+      if (options.userId !== undefined && options.userId !== '') body.userId = options.userId
+      const json = await this.requestJson('/api/documents.list', body)
+      const rows = Array.isArray(json.data) ? (json.data as Array<Record<string, unknown>>) : []
+      const pagination = (json.pagination ?? {}) as { total?: unknown }
+      if (typeof pagination.total === 'number') total = pagination.total
+      if (rows.length === 0) { complete = true; break }
+      offset += rows.length
+      let hitBoundary = false
+      let processed = 0
+      for (const doc of rows) {
+        processed += 1
+        scanned += 1
+        const updatedAt = typeof doc.updatedAt === 'string' ? doc.updatedAt : ''
+        const ts = Date.parse(updatedAt)
+        // 已按 updatedAt 降序：第一条早于窗口的就意味着后面全都更早，可以停。
+        if (Number.isFinite(ts) && ts < after) { hitBoundary = true; break }
+        if (typeof doc.id !== 'string' || doc.id === '') continue
+        const createdBy = doc.createdBy as Record<string, unknown> | undefined
+        const authorName = typeof createdBy?.name === 'string' && createdBy.name.trim() !== ''
+          ? OutlineClient.stripHtml(createdBy.name)
+          : undefined
+        hits.push({
+          id: doc.id,
+          title: OutlineClient.stripHtml(typeof doc.title === 'string' ? doc.title : '(无标题)'),
+          url: this.absolutize(typeof doc.url === 'string' ? doc.url : ''),
+          snippet: '',
+          collectionId: typeof doc.collectionId === 'string' ? doc.collectionId : '',
+          updatedAt,
+          ...(typeof doc.parentDocumentId === 'string' ? { parentDocumentId: doc.parentDocumentId } : {}),
+          ...(authorName !== undefined ? { authorName } : {}),
+        })
+        if (hits.length >= target) break
+      }
+      if (hitBoundary) { complete = true; break }
+      // 页内还有没读完的文档就被 limit 截住 → 一定不完整（此时 offset 可能恰好等于 total，
+      // 不能据此判完整）；只有整页读完并已覆盖到全库末尾才算完整。
+      if (processed < rows.length) break
+      if (total > 0 && offset >= total) { complete = true; break }
+    }
+    // 只有确认扫到边界才算完整；因达到 limit / 扫描上限而停的一律标记截断，
+    // 否则「还有更多」会被说成「已经全了」。
+    return { total, hits, truncated: !complete, scanned }
   }
 
   /** 写操作后失效搜索缓存（结果可能随增删改变化）。 */
