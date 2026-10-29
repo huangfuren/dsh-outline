@@ -4,7 +4,7 @@
 
 A DeepSeek Harness plugin that searches and reads an [Outline](https://www.getoutline.com/) knowledge base from your conversation. Give it a keyword — it returns matching documents with **titles, snippets, and links**; ask for one of them and it returns the **full content in Markdown**. Approved write tools can create, update, and delete documents, with an approval prompt before every write.
 
-> Project status: 0.9.0. The current feature set is covered by unit tests (229 tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); the dsh `0.2.x` line (`>=0.2.0-rc.1 <1.0.0`) is also adapted. Older Harness builds are not certified.
+> Project status: 0.9.1. The current feature set is covered by unit tests (233 tests with cross-platform edge cases), a Mock-server smoke, and a settings-chain integration check. Supported platforms: Windows / macOS / Linux. The supported DSH baseline is `0.1.5-rc.2` (`settings.installSection` is required for the settings card); the dsh `0.2.x` line (`>=0.2.0-rc.1 <1.0.0`) is also adapted. Older Harness builds are not certified.
 
 ## The core idea
 
@@ -60,10 +60,10 @@ How that is handled:
 Install from the public GitHub repository, pinned to the latest release tag:
 
 ```bash
-dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.9.0
+dsh plugin --profile web add git+https://github.com/huangfuren/dsh-outline.git#v0.9.1
 ```
 
-The `#v0.9.0` suffix pins the exact release; omit it to track the latest commit on `main`.
+The `#v0.9.1` suffix pins the exact release; omit it to track the latest commit on `main`.
 
 Restart `dsh web` after installation. The published package contains the built `lib/` directory, so a normal Git install does not depend on a local build step. This package ships **no install lifecycle scripts**: the `postinstall` cleanup hook it used to carry trips pnpm's build-script approval (`ERR_PNPM_IGNORED_BUILDS`), which aborts installation on newer surfaces such as the desktop app.
 

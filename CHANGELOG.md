@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+## [v0.9.1] - 2026-10-29
+
 ### Fixed — 搜索带不存在的 collectionId 时，403 不再被归因为 token 失效
 
 实测该实例对「不存在的集合 id」返回 `403 Authorization error`（而非 404），默认映射会让用户
