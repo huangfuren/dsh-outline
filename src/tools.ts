@@ -150,6 +150,11 @@ function renderSearchResults(
 }
 
 function renderDocument(doc: OutlineDocument, truncated: boolean): string {
+  // 已删除文档的 info 仍返回 200（Outline 软删除）：必须标注，否则读回的回收站内容
+  // 会被当成现行内容（典型场景：模型拿对话里缓存的旧 id 去读，文档恰好刚被删）。
+  const deletedNote = doc.deletedAt !== undefined
+    ? `\n\n⚠️ 该文档已被删除（deletedAt: ${doc.deletedAt}，目前在回收站中）。以下是其最后的内容，仅供参考；请勿对它执行更新或追加。`
+    : ''
   // 截断提示必须直接点明"不要写回"：text 是整体替换，把截断结果原样交给
   // outline_update_document 会永久丢掉被截掉的部分（读→改→写链路的静默丢内容路径）。
   const note = truncated
@@ -158,7 +163,7 @@ function renderDocument(doc: OutlineDocument, truncated: boolean): string {
       + '\n如需改全文：先用更大的 maxLength（上限 200000）重新调用 outline_get_document；'
       + '\n如只需追加内容：用 outline_update_document 并传 append: true。）'
     : ''
-  return `# ${doc.title}\n\n${doc.url}\n\n${doc.text}${note}`
+  return `# ${doc.title}\n\n${doc.url}\n\n${doc.text}${deletedNote}${note}`
 }
 
 // ---------------------------------------------------------------------------

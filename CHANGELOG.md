@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+### Fixed — 已删除文档的读取不再被当成现行内容
+
+实测确认 Outline 的 `documents.delete` 是软删除：`documents.info` 对已删文档仍返回 200（带 `deletedAt` 字段），
+而 `documents.list` / `documents.search` 均不含已删文档。场景：模型拿着对话里缓存的旧 id 去读，
+文档恰好刚被删 —— 读回的回收站内容会被当成现行内容，甚至被更新。
+修复：`getDocument` 透传 `deletedAt`，渲染层头部标注「该文档已被删除（在回收站中），请勿更新或追加」。
+
 ## [v0.9.0] - 2026-10-29
 
 ### Added — Outline 新老版本兼容（v0.79 ~ v1.12+）

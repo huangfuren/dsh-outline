@@ -82,6 +82,9 @@ export interface OutlineDocument {
   updatedAt: string
   collectionId?: string
   parentDocumentId?: string
+  /** 非空表示文档已被软删除（在回收站里）：documents.info 对已删文档仍返回 200，
+   *  不标注的话读回的内容会被当成现行内容（典型场景：模型拿着对话里缓存的旧 id 去读）。 */
+  deletedAt?: string
 }
 
 /** Outline 集合（collections.list 条目）。documentCount 部分实例可能不返回。 */
@@ -703,6 +706,7 @@ export class OutlineClient {
       ...(data.parentDocumentId !== undefined && data.parentDocumentId !== null
         ? { parentDocumentId: String(data.parentDocumentId) }
         : {}),
+      ...(typeof data.deletedAt === 'string' && data.deletedAt !== '' ? { deletedAt: data.deletedAt } : {}),
     }
     this.docCache.set(id, { expires: Date.now() + this.cacheTtlMs, doc })
     // 超限时淘汰最旧条目（Map 保持插入顺序）

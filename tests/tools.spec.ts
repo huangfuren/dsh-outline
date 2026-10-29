@@ -429,6 +429,24 @@ describe('outline_get_document', () => {
     const tool = outlineGetDocumentTool(() => fakeClient({ getDocument: async () => { throw new OutlineApiError('not-found', 'Outline 文档不存在或无权访问（HTTP 404）：请确认文档 id 是否正确。', 404) } }))
     await expect(tool.execute({ id: 'nope' }, exec)).rejects.toMatchObject({ kind: 'not-found' })
   })
+
+  it('软删除文档（deletedAt 存在）渲染回收站警示，正常文档不带', async () => {
+    const tool = outlineGetDocumentTool(() => fakeClient({
+      getDocument: async () => ({ id: 'd1', title: '已删', url: '/d1', text: '内容', updatedAt: '', deletedAt: '2026-10-29T09:56:33.803Z' }),
+    }))
+    const deleted = await tool.execute({ id: 'd1' }, exec) as any
+    const rendered = (tool.output.render({ id: 'd1' }, deleted))[0]!.text as string
+    expect(rendered).toContain('已被删除')
+    expect(rendered).toContain('回收站')
+    expect(rendered).toContain('请勿对它执行更新或追加')
+
+    const tool2 = outlineGetDocumentTool(() => fakeClient({
+      getDocument: async () => ({ id: 'd2', title: '正常', url: '/d2', text: '内容', updatedAt: '' }),
+    }))
+    const normal = await tool2.execute({ id: 'd2' }, exec) as any
+    const rendered2 = (tool2.output.render({ id: 'd2' }, normal))[0]!.text as string
+    expect(rendered2).not.toContain('已被删除')
+  })
 })
 
 // ---------------------------------------------------------------------------
