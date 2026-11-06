@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+## [v0.9.2] - 2026-11-06
+
 ### Changed
 
 - **补 `dsh.compatibility.dshReleases` 声明**：`0.1.7-rc.2` / `0.2.0-rc.2` / `0.2.1-rc.5` /
