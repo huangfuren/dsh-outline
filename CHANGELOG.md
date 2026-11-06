@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Release-specific notes 
 
 ## [Unreleased]
 
+### Changed
+
+- **补 `dsh.compatibility.dshReleases` 声明**：`0.1.7-rc.2` / `0.2.0-rc.2` / `0.2.1-rc.5` /
+  `0.2.2-rc.1`。依据：0.1.7-rc.2 上七插件实测加载；0.2.2-rc.1 的三条客户端断代 API
+  （`EntryTree.write()`→`commit(change)`、`MenuTarget`→`ContextMenuTarget`、
+  `useAnchoredPosition` / `Menu.getAnchorRect` 移除）本仓引用数为 0。该字段供插件市场与
+  兼容性阅读器查看，不参与宿主加载判定 —— 宿主强校验的仍是 `peerDependencies`。
+
 ## [v0.9.1] - 2026-10-29
 
 ### Fixed — 搜索带不存在的 collectionId 时，403 不再被归因为 token 失效
